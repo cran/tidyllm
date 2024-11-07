@@ -2,11 +2,11 @@
 #'
 #' This function generates a callback function that processes streaming responses
 #' from different language model APIs. The callback function is specific to the
-#' API provided (`claude`, `ollama`, or `chatgpt`) and processes incoming data streams,
+#' API provided (`claude`, `ollama`, `"mistral"`, or `openai`) and processes incoming data streams,
 #' printing the content to the console and updating a global environment for further use.
 #'
 #' @param .api A character string indicating the API type. Supported values are
-#'   `"claude"`, `"ollama"`, and `"chatgpt"`.
+#'   `"claude"`, `"ollama"`, `"mistral"`, `"groq"` and `"openai"`.
 #' @return A function that serves as a callback to handle streaming responses
 #'   from the specified API. The callback function processes the raw data, updates
 #'   the `.tidyllm_stream_env$stream` object, and prints the streamed content to the console.
@@ -17,7 +17,7 @@
 #'   and `message_stop` events to control streaming flow.
 #' - **For Ollama API**: The function directly parses the stream content as JSON and extracts the
 #'   `message$content` field.
-#' - **For ChatGPT API**: The function handles JSON data streams and processes content deltas.
+#' - **For OpenAI, Mistral and Groq**: The function handles JSON data streams and processes content deltas.
 #'   It stops processing when the `[DONE]` message is encountered.
 generate_callback_function <- function(.api) {
   if (.api == "claude") {
@@ -81,7 +81,7 @@ generate_callback_function <- function(.api) {
       utils::flush.console()
       TRUE
       }
-  } else if (.api == "chatgpt") {
+  } else if (.api %in% c("openai","mistral","groq","azure_openai")) {
       callback_fn <- function(.data) {
         # Read the stream content and split into lines
         lines <- .data |>
@@ -112,11 +112,13 @@ generate_callback_function <- function(.api) {
             )
             
             if (!is.null(parsed_event)) {
-              delta_content <- parsed_event$choices[[1]]$delta$content
-              if (!is.null(delta_content)) {
-                .tidyllm_stream_env$stream <- paste0(.tidyllm_stream_env$stream, delta_content)
-                cat(delta_content)
-                utils::flush.console()
+              if(length(parsed_event$choices)>=1){
+                delta_content <- parsed_event$choices[[1]]$delta$content
+                if (!is.null(delta_content)) {
+                  .tidyllm_stream_env$stream <- paste0(.tidyllm_stream_env$stream, delta_content)
+                  cat(delta_content)
+                  utils::flush.console()
+                }
               }
             }
           } else {
@@ -127,7 +129,7 @@ generate_callback_function <- function(.api) {
         
         return(continue_processing)
       }
-    } else {
+  } else {  
     stop("Unknown API for callback function.")
   }
   

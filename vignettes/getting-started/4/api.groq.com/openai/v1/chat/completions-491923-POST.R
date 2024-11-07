@@ -1,0 +1,13 @@
+structure(list(method = "POST", url = "https://api.groq.com/openai/v1/chat/completions", 
+    status_code = 200L, headers = structure(list(date = "Wed, 16 Oct 2024 00:52:02 GMT", 
+        `content-type` = "application/json", `cache-control` = "private, max-age=0, no-store, no-cache, must-revalidate", 
+        vary = "Origin", `x-ratelimit-limit-requests` = "7000", 
+        `x-ratelimit-limit-tokens` = "7000", `x-ratelimit-remaining-requests` = "6999", 
+        `x-ratelimit-remaining-tokens` = "6977", `x-ratelimit-reset-requests` = "12.342857142s", 
+        `x-ratelimit-reset-tokens` = "197.142857ms", `x-request-id` = "req_01ja9cyx5qfphbv3cz76bkjs2s", 
+        via = "1.1 google", `alt-svc` = "h3=\":443\"; ma=86400", 
+        `cf-cache-status` = "DYNAMIC", `set-cookie` = "REDACTED", 
+        server = "cloudflare", `cf-ray` = "8d34105a3a00d34e-FRA", 
+        `content-encoding` = "gzip"), class = "httr2_headers"), 
+    body = charToRaw("{\"id\":\"chatcmpl-903407ce-fcd4-46c3-880f-27d1f7268118\",\"object\":\"chat.completion\",\"created\":1729039922,\"model\":\"llama-3.2-90b-text-preview\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"A typical German address would look like this:\\n\\nHerrn Peter Müller\\nMünchner Straße 23a\\n80803 München\\n\\nIn this example:\\n\\n- \\\"Herrn\\\" is the title (Mr.) \\n- \\\"Peter Müller\\\" is the recipient's name\\n- \\\"Münchner Straße\\\" is the street name\\n- \\\"23a\\\" is the house number\\n- \\\"80803\\\" is the postal code\\n- \\\"München\\\" is the city name\"},\"logprobs\":null,\"finish_reason\":\"stop\"}],\"usage\":{\"queue_time\":0.005171867999999998,\"prompt_tokens\":46,\"prompt_time\":0.011150101,\"completion_tokens\":99,\"completion_time\":0.396019894,\"total_tokens\":145,\"total_time\":0.407169995},\"system_fingerprint\":\"fp_5c5d1b5cfb\",\"x_groq\":{\"id\":\"req_01ja9cyx5qfphbv3cz76bkjs2s\"}}\n"), 
+    cache = new.env(parent = emptyenv())), class = "httr2_response")

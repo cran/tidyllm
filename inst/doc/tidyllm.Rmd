@@ -1,0 +1,381 @@
+---
+title: "Get Started"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Get Started}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+# Introduction to tidyllm
+**tidyllm** is an R package providing a unified interface for interacting with various large language model APIs. This vignette will guide you through the basic setup and usage of **tidyllm**.
+
+## Installation
+
+To install **tidyllm** from CRAN, use:
+
+```{r, eval= FALSE, echo=TRUE}
+install.packages("tidyllm")
+```
+
+Or, to install the current development version directly from GitHub using devtools:
+```{r, eval= FALSE, echo=TRUE}
+# Install devtools if not already installed
+if (!requireNamespace("devtools", quietly = TRUE)) {
+  install.packages("devtools")
+}
+
+# Install TidyLLM from GitHub
+devtools::install_github("edubruell/tidyllm")
+```
+
+### Setting up API Keys or ollama 
+
+Before using **tidyllm**, set up API keys for the services you plan to use. Here’s how to set them up for different providers:
+
+1. For Claude models you can get an API key in the [Anthropic Console](https://console.anthropic.com/settings/keys):
+```{r, eval= FALSE, echo=TRUE}
+Sys.setenv(ANTHROPIC_API_KEY = "YOUR-ANTHROPIC-API-KEY")
+```
+
+2. For OpenAI you can obtain an API key by signing up at OpenAI and set it with:
+```{r, eval= FALSE, echo=TRUE}
+Sys.setenv(OPENAI_API_KEY = "YOUR-OPENAI-API-KEY")
+```
+3. For Mistral you can set the API key on the [Mistral console page](https://console.mistral.ai/api-keys/) and set it by
+``` r
+Sys.setenv(MISTRAL_API_KEY = "MISTRAL-API-KEY-GOES-HERE")
+```
+4. For groq (not be confused with [grok](https://x.ai/)) you can setup you API keys in the [Groq Console](https://console.groq.com/playground):
+```{r, eval= FALSE, echo=TRUE}
+Sys.setenv(GROQ_API_KEY = "YOUR-GROQ-API-KEY")
+```
+
+Alternatively, for persistent storage, add these keys to your `.Renviron` file:
+
+For this, run `usethis::edit_r_environ()`, and add a line with with an API key in this file, for example:
+
+```{r, eval= FALSE, echo=TRUE}
+ANTHROPIC_API_KEY="YOUR-ANTHROPIC-API-KEY"
+```
+
+
+If you want to work with local large lange models via `ollama` you need to install it from [the official project website](https://ollama.com/). Ollama sets up a local large language model server that you can use to run open-source models on your own devices. 
+
+### Basic Usage
+
+Let's start with a simple example using tidyllm to interact with different language models:
+
+```{r convo1,  eval=FALSE, echo=TRUE}
+library(tidyllm)
+
+# Start a conversation with Claude
+conversation <- llm_message("What is the capital of France?") |>
+  claude()
+
+#Standard way that llm_messages are printed
+conversation
+```
+```{r convo1_out,  eval=TRUE, echo=FALSE}
+library(tidyllm)
+
+#Easier than mocking. httptest2 caused a few issues with my vignette
+conversation <- llm_message("What is the capital of France?") |>
+  llm_message("The capital of France is Paris.",.role="assistant")
+
+conversation
+```
+```{r convo2,  eval=FALSE, echo=TRUE}
+# Continue the conversation with ChatGPT
+conversation <- conversation |>
+  llm_message("What's a famous landmark in this city?") |>
+  openai()
+
+get_reply(conversation)
+```
+```{r convo2_out,  eval=TRUE, echo=FALSE}
+c("A famous landmark in Paris is the Eiffel Tower.")
+```
+
+
+### Sending Images to Models
+
+**tidyllm** also supports sending images to multimodal models. Let's send this picture here:
+```{r, echo=FALSE, out.width="70%"}
+knitr::include_graphics("picture.jpeg")
+```
+
+Here we let ChatGPT guess where the picture was made:
+```{r images,  eval=FALSE, echo=TRUE}
+# Describe an image using a llava model on ollama
+image_description <- llm_message("Describe this picture? Can you guess where it was made?",
+                                 .imagefile = "picture.jpeg") |>
+  openai(.model = "gpt-4o")
+
+# Get the last reply
+get_reply(image_description)
+```
+```{r images_out,  eval=TRUE, echo=FALSE}
+c("The picture shows a beautiful landscape with a lake, mountains, and a town nestled below. The sun is shining brightly, casting a serene glow over the water. The area appears lush and green, with agricultural fields visible. \n\nThis type of scenery is reminiscent of northern Italy, particularly around Lake Garda, which features similar large mountains, picturesque water, and charming towns.")
+```
+
+### Adding PDFs to messages
+
+The `llm_message()` function also supports extracting text from PDFs and including it in the message. This allows you to easily provide context from a PDF document when interacting with an AI assistant.
+
+To use this feature, you need to have the `pdftools` package installed. If it is not already installed, you can install it with:
+
+```{r,  eval=FALSE, echo=TRUE}
+install.packages("pdftools")
+```
+
+To include text from a PDF in your prompt, simply pass the file path to the `.pdf` argument of the `chat` function:
+
+```{r pdf,  eval=FALSE, echo=TRUE}
+llm_message("Please summarize the key points from the provided PDF document.", 
+     .pdf = "die_verwandlung.pdf") |>
+     openai(.model = "gpt-4o-mini")
+```
+```{r pdf_out,  eval=TRUE, echo=FALSE}
+  llm_message("Please summarize the key points from the provided PDF document.", 
+              .pdf="die_verwandlung.pdf") |>
+    llm_message("Here are the key points from the provided PDF document 'Die Verwandlung' by Franz Kafka:
+
+1. The story centers around Gregor Samsa, who wakes up one morning to find that he has been transformed into a giant insect-like creature.
+
+2. Gregor's transformation causes distress and disruption for his family. They struggle to come to terms with the situation and how to deal with Gregor in his new state.
+
+3. Gregor's family, especially his sister Grete, initially tries to care for him, but eventually decides they need to get rid of him. They lock him in his room and discuss finding a way to remove him.
+
+4. Gregor becomes increasingly isolated and neglected by his family. He becomes weaker and less mobile due to his injuries and lack of proper care.
+
+5. Eventually, Gregor dies, and his family is relieved. They then begin to make plans to move to a smaller, more affordable apartment and start looking for new jobs and opportunities.",.role="assistant")
+```
+The package will automatically extract the text from the PDF  and include it in the prompt sent to the an API. The text will be wrapped in `<pdf>` tags to clearly indicate the content from the PDF:
+
+```
+Please summarize the key points from the provided PDF document.
+
+<pdf filename="example_document.pdf">
+Extracted text from the PDF file...
+</pdf>
+```
+### Sending R Outputs to Language Models
+
+You can automatically include R code outputs in your prompts. 
+`llm_message()` has an optional argument `.f` in which you can specify a (anonymous) function, which 
+will be run and which console output will be captured and appended to the message when you run it.
+
+In addition you can use `.capture_plot` to send the last plot pane to a model. 
+
+```{r routputs_base,  eval=TRUE, echo=TRUE, message=FALSE}
+library(tidyverse)
+
+# Create a plot for the mtcars example data
+ggplot(mtcars, aes(wt, mpg)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = 'y ~ x') +
+  labs(x="Weight",y="Miles per gallon")
+```
+
+Now we can send the plot and data summary to a language model:
+```{r routputs_base_out,  eval=FALSE, echo=TRUE}
+library(tidyverse)
+llm_message("Analyze this plot and data summary:", 
+                  .capture_plot = TRUE, #Send the plot pane to a model
+                  .f = ~{summary(mtcars)}) |> #Run summary(data) and send the output
+  claude()
+```
+```{r routputs_base_rq,  eval=TRUE, echo=FALSE}
+# Create a plot for the mtcars example data
+
+llm_message("Analyze this plot and data summary:", 
+                  .imagefile = "file1568f6c1b4565.png", #Send the plot pane to a model
+                  .f = ~{summary(mtcars)}) |> #Run summary(data) and send the output
+  llm_message("Based on the plot and data summary provided, here's an analysis:\n\n1. Relationship between Weight and MPG:\n   The scatter plot shows a clear negative correlation between weight (wt) and miles per gallon (mpg). As the weight of the car increases, the fuel efficiency (mpg) decreases.\n\n2. Linear Trend:\n   The blue line in the plot represents a linear regression fit. The downward slope confirms the negative relationship between weight and mpg.\n\n3. Data Distribution:\n   - The weight of cars in the dataset ranges from 1.513 to 5.424 (likely in thousands of pounds).\n   - The mpg values range from 10.40 to 33.90.\n\n4. Variability:\n   There's some scatter around the regression line, indicating that while weight is a strong predictor of mpg, other factors also influence fuel efficiency.\n\n5. Other Variables:\n   While not shown in the plot, the summary statistics provide information on other variables:\n   - Cylinder count (cyl) ranges from 4 to 8, with a median of 6.\n   - Horsepower (hp) ranges from 52 to 335, with a mean of 146.7.\n   - Transmission type (am) is binary (0 or 1), likely indicating automatic vs. manual.\n\n6. Model Fit:\n   The grey shaded area around the regression line represents the confidence interval. It widens at the extremes of the weight range, indicating less certainty in predictions for very light or very heavy vehicles.\n\n7. Outliers:\n   There are a few potential outliers, particularly at the lower and higher ends of the weight spectrum, that deviate from the general trend.\n\nIn conclusion, this analysis strongly suggests that weight is a significant factor in determining a car's fuel efficiency, with heavier cars generally having lower mpg. However, the presence of scatter in the data indicates that other factors (possibly related to engine characteristics, transmission type, or aerodynamics) also play a role in determining fuel efficiency.",.role="assistant")
+```
+
+### Getting  replies from the API 
+
+Retrieve an assistant reply as text from a message history with `get_reply()`. Specify an index to choose which assistant message to get:
+
+```{r eval=FALSE,echo=TRUE}
+conversation <- llm_message("Imagine a German adress.") |>
+     groq() |>
+     llm_message("Imagine another address") |>
+     groq()
+
+conversation
+```
+```{r eval=TRUE,echo=FALSE}
+conversation <-  llm_message("Imagine a German adress.") |>
+  llm_message("Let's imagine a German address: \n\nHerr Müller\nMusterstraße 12\n53111 Bonn",
+              .role="assistant") |>
+  llm_message("Imagine another address") |>
+  llm_message("Let's imagine another German address:\n\nFrau Schmidt\nFichtenweg 78\n42103 Wuppertal",
+            .role="assistant")
+conversation
+```
+
+By default `get_reply()` gets the last assistant message. Alternatively you can also use `last_reply()` as a shortcut for the latest response.
+
+```{r standard_last_reply,  eval=TRUE, echo=TRUE}
+#Getting the first 
+conversation |> get_reply(1)
+#By default it gets the last reply
+conversation |> get_reply()
+#Or if you can more easily remember last_reply this works too
+conversation |> last_reply()
+```
+
+### Working with structured model outputs
+
+To make model responses easy to interpret and integrate into your workflow, **tidyllm** supports defining schemas to ensure that models reply with structured outputs in [JSON (JavaScript Object Notation)](https://de.wikipedia.org/wiki/JavaScript_Object_Notation) following your specifications. JSON is a standard format for organizing data in simple key-value pairs, which is both human-readable and machine-friendly.
+
+Currently, `openai()` is the only API function in **tidyllm** that supports schema enforcement through the `.json_schema` argument. This ensures that replies conform to a pre-defined consistent data formatting.
+
+To create schemas, you can use the `tidyllm_schema()` function, which translates your data format specifications into the  [JSON-schema format](https://json-schema.org/) the API requires. This helper function standardizes the data layout by ensuring flat (non-nested) JSON structures with defined data types. Here’s how to define a schema:
+
+- **`name`**: A name identifier for the schema (which is needed by the API).
+- **`...` (fields)**: Named arguments for field names and their data types, including:
+  - `"character"` or `"string"`: Text fields.
+  - `"factor(...)"`: Enumerations with allowable values, like `factor(Germany, France)`.
+  - `"logical"`: `TRUE` or `FALSE`
+  - `"numeric"`: Numeric fields.
+  - `"type[]"`: Lists of a given type, such as `"character[]"`.
+  
+Here’s an example schema defining an address format:
+
+```{r schema,  eval=FALSE, echo=TRUE}
+address_schema <- tidyllm_schema(
+  name = "AddressSchema",
+  street = "character",
+  houseNumber = "numeric",
+  postcode = "character",
+  city = "character",
+  region = "character",
+  country = "factor(Germany,France)"
+)
+address <- llm_message("Imagine an address in JSON format that matches the schema.") |>
+        openai(.json_schema = address_schema)
+address
+```
+```{r schema_out,  eval=TRUE, echo=FALSE}
+address_base <- llm_message("Imagine an address in JSON format that matches the schema.") 
+address <- address_base$add_message(role = "assistant",
+                           content = '{"street":"Hauptstraße","houseNumber":123,"postcode":"10115","city":"Berlin","region":"Berlin","country":"Germany"}',
+                           media = NULL,
+                           json = TRUE) 
+
+address
+```
+
+The model responded in JSON format, organizing data into key-value pairs like specified. You can then convert this JSON output into an R list for easier handling with `get_reply_data()`:
+
+```{r get_reply_data}
+address |> get_reply_data() |> str()
+```
+
+Other API functions like `ollama()`, `groq()`, and `mistral()` also support structured outputs through a simpler JSON mode, accessible with the `.json` argument. Since these APIs do not currently support native schema enforcement, you’ll need to prompt the model to follow a specified format directly in your messages. Although `get_reply_data()` can help extract structured data from these responses when you set `.json=TRUE` in each of the API functions, the model may not always adhere strictly to the specified structure. Once these APIs support native schema enforcement, **tidyllm** will integrate full schema functionality for them.
+
+### API parameters
+
+Different API functions support different model parameters like, how deterministic the response should be via parameters like temperature. Please read API-documentation and the documentation of the model functions for specific examples.
+
+```{r temperature,  eval=FALSE, echo=TRUE}
+  temp_example <- llm_message("Explain how temperature parameters work in large language models  and why temperature 0 gives you deterministic outputs in one sentence.")
+  
+  #per default it is non-zero
+  temp_example |> ollama(.temperature=0)
+```
+```{r temperature_out,  eval=TRUE, echo=FALSE}
+  temp_example <- llm_message("Explain how temperature parameters work in large language models  and why temperature 0 gives you deterministic outputs in one sentence.")
+
+  temp_example |>
+    llm_message("In large language models, temperature parameters control the randomness of generated text by scaling the output probabilities, with higher temperatures introducing more uncertainty and lower temperatures favoring more likely outcomes; specifically, setting temperature to 0 effectively eliminates all randomness, resulting in deterministic outputs because it sets the probability of each token to its maximum likelihood value.",
+                .role="assistant")
+```
+
+```{r temp2,  eval=FALSE, echo=TRUE}
+  #Retrying with .temperature=0
+  temp_example |> ollama(.temperature=0)
+```
+```{r temp2_out,  eval=TRUE, echo=FALSE}
+  temp_example |>
+    llm_message("In large language models, temperature parameters control the randomness of generated text by scaling the output probabilities, with higher temperatures introducing more uncertainty and lower temperatures favoring more likely outcomes; specifically, setting temperature to 0 effectively eliminates all randomness, resulting in deterministic outputs because it sets the probability of each token to its maximum likelihood value.",
+                .role="assistant")
+```
+
+### Embeddings
+
+[Embedding models](https://cohere.com/llmu/text-embeddings) in **tidyllm** transform textual inputs into vector representations, capturing semantic information that can enhance similarity comparisons, clustering, and retrieval tasks. You can generate embeddings using functions like `openai_embedding()`, `mistral_embedding()`, and `ollama_embedding()` which each interface with their respective APIs. These functions create vector representations for texts.  These functions return vector representations either for each message in a message history or, more typically for this application, for each entry in a character vector. 
+
+### Batch requests
+
+Anthropic and OpenAI, offer batch request options that are around 50% cheaper than standard single-interaction APIs. Batch processing allows you to submit multiple message histories at once, which are then processed together on the model providers servers, usually within a 24-hour period. In **tidyllm**, you can use the `send_claude_batch()` or `send_openai_batch()` functions to submit these batch requests.
+
+Here’s an example of how to send a batch request to Claude’s batch API:
+
+```{r, eval=FALSE}
+#Create a message batch and save it to disk to fetch it later
+glue("Write a poem about {x}", x=c("cats","dogs","hamsters")) |>
+  purrr::map(llm_message) |>
+  send_claude_batch() |>
+  saveRDS("claude_batch.rds")
+```
+The `send_claude_batch()` function returns the same list of message histories that was input, but marked with an attribute that contains a batch-id from the Claude API as well as unique names for each list element that can be used to stitch together messages with replies, once they are ready.  If you provide a named list of messages, tidyllm will use these names as identifiers in the batch, if these names are unique.
+
+**Tip:** Saving batch requests to a file allows you to persist them across R sessions, making it easier to manage large jobs and access results later.
+
+```{r, eval=FALSE}
+#Create a message batch and save it to disk to fetch it later
+glue("Write a poem about {x}", x=c("cats","dogs","hamsters")) |>
+  purrr::map(llm_message) |>
+  send_claude_batch() |>
+  saveRDS("claude_batch.rds")
+```
+After sending a batch request, you can check its status with `check_openai_batch()` or `check_claude_batch()` . For example:
+```{r, eval=FALSE}
+#Check the status of the batch
+readRDS("claude_batch.rds") |>
+   check_claude_batch()
+```
+```{r, echo=FALSE}
+tribble(
+  ~batch_id,                         ~status, ~created_at,           ~expires_at,           ~req_succeeded, ~req_errored, ~req_expired, ~req_canceled,
+  "msgbatch_02A1B2C3D4E5F6G7H8I9J",  "ended", as.POSIXct("2024-11-01 10:30:00"), as.POSIXct("2024-11-02 10:30:00"), 3, 0, 0, 0
+)
+```
+The status output shows details such as the number of successful, errored, expired, and canceled requests in the batch, as well as the current status. You can also see all your batch requests with `list_claude_batches()` or in the batches dashboard of the Anthropic console. 
+Once the processing of a batch is completed you can fetch its results with `fetch_claude_batch()` or `fetch_openai_batch()`:
+
+```{r eval=FALSE}
+conversations <- readRDS("claude_batch.rds") |>
+  fetch_claude_batch()
+
+poems <- map_chr(conversations, get_reply)
+```
+The output is a list of message histories, each now updated with new assistant replies. You can further process these responses with **tidyllm's** standard tools.Before launching a large batch operation, it’s good practice to run a few test requests and review outputs with the standard API fuctions. This approach helps confirm that prompt settings and model configurations produce the desired responses, minimizing potential errors or resource waste.
+
+### Streaming back responses (Experimental)
+
+All standard chat API-functions support real-time streaming of reply tokens to the console while the model works with the `.stream=TRUE` argument.  While this feature offers slightly better feedback on model behavior in real-time, it’s not particularly useful for data-analysis workflows. We consider this feature experimental and recommend using non-streaming responses for production tasks. Note that error handling in streaming callbacks varies by API and differs in quality at this time.
+
+### Choosing the Right Model and API
+
+tidyllm supports multiple APIs, each offering distinct large language models with varying strengths. The choice of which model or API to use often depends on the specific task, cost considerations, and data privacy concerns.
+
+1. **`claude()` - Anthropic API:** [Claude](https://docs.anthropic.com/en/docs/welcome) is known for generating thoughtful, nuanced responses, making it ideal for tasks that require more human-like reasoning, such as summarization or creative writing. Claude Sonnet 3.5 currently is one of the top-performing models on many benchmarks. However, it can sometimes be more verbose than necessary, and it lacks direct JSON support, which requires additional prompting and validation to ensure structured output. 
+
+
+2. **`openai()` (OpenAI API):** Models by OpenAI API, particularly the GPT-4o model, are extremely versatile and perform well across a wide range of tasks, including text generation, code completion, and multimodal analysis. In addition the o1-reasoning models offer very good performance for a set of specific task (at a relatively high price). There is also an `azure_openai()` function if you prefer to use the OpenAI API on Microsoft Azure. 
+
+3. **`mistral()` (EU-based):** [Mistral](https://docs.mistral.ai/) offers lighter-weight, open-source models developed and hosted in the EU, making it particularly appealing if data protection (e.g., GDPR compliance) is a concern. While the models may not be as powerful as GPT-4o or Claude Sonnet, Mistral offers good performance for standard text generation tasks.
+
+4. **`groq()` (Fast):** [Groq](https://console.groq.com/docs/quickstart) offers a unique advantage with its custom AI accelerator hardware, that get you the fastest output available on any API. It delivers high performance at low costs, especially for tasks that require fast execution. It hosts many strong open-source models, like **lamma3:70b**. There is also a `groq_transcribe()` function available that allows you to transcribe audio files with the Whipser-Large model on the Groq API.
+
+5. **`ollama()` (Local Models):** If data privacy is a priority, running open-source models like **gemma2::9B** locally via [ollama](https://ollama.com/) gives you full control over model execution and data. However, the trade-off is that local models require significant computational resources, and are often not quite as powerful as the large API-providers. The [ollama blog](https://ollama.com/blog) regularly has posts about new models and their advantages that you can download via `ollama_download_model()`.
+
+6. **Other OpenAI-compatible Local Models:** Besides ollama, there are many solutions to run local models that are mostly compatible to the OpenAI API like [llama.cpp](https://github.com/ggerganov/llama.cpp/blob/master/examples/server/README.md), [vllm](https://github.com/vllm-project/vllm) and [many more](https://www.reddit.com/r/LocalLLaMA/comments/16csz5n/best_openai_api_compatible_application_server/). To use such an API you can set the base url of the api with `.api_url` as well as the path to the model-endpoint with `.api_path` argument in the `openai()` function. Set `.compatible=TRUE` to skip api-key checks and rate-limit tracking.  Compatibility with local models solutions may vary depending on the specific API’s implementation, and full functionality cannot be guaranteed.
+
+

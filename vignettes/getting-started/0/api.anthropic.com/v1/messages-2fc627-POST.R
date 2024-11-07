@@ -1,0 +1,12 @@
+structure(list(method = "POST", url = "https://api.anthropic.com/v1/messages", 
+    status_code = 200L, headers = structure(list(date = "Wed, 16 Oct 2024 00:51:40 GMT", 
+        `content-type` = "application/json", `anthropic-ratelimit-requests-limit` = "50", 
+        `anthropic-ratelimit-requests-remaining` = "49", `anthropic-ratelimit-requests-reset` = "2024-10-16T00:52:10Z", 
+        `anthropic-ratelimit-tokens-limit` = "40000", `anthropic-ratelimit-tokens-remaining` = "40000", 
+        `anthropic-ratelimit-tokens-reset` = "2024-10-16T00:51:40Z", 
+        `request-id` = "req_01AaWumjjQfjdMDvTRrnp868", `x-cloud-trace-context` = "a6fa53423ab69ee7833cecf18d85df41", 
+        via = "1.1 google", `cf-cache-status` = "DYNAMIC", `x-robots-tag` = "none", 
+        server = "cloudflare", `cf-ray` = "8d340fcc795b1cc9-FRA", 
+        `content-encoding` = "gzip"), class = "httr2_headers"), 
+    body = charToRaw("{\"id\":\"msg_01Lm6GLp6jUyEEN991EjirVr\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-3-5-sonnet-20240620\",\"content\":[{\"type\":\"text\",\"text\":\"The capital of France is Paris.\"}],\"stop_reason\":\"end_turn\",\"stop_sequence\":null,\"usage\":{\"input_tokens\":20,\"output_tokens\":10}}"), 
+    cache = new.env(parent = emptyenv())), class = "httr2_response")

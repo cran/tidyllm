@@ -14,5 +14,5 @@ A tibble containing model information, or NULL if no models are found.
 }
 \description{
 This function connects to the Ollama API and retrieves information
-about available models, returning it as a data frame.
+about available models, returning it as a tibble.
 }

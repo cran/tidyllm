@@ -8,6 +8,7 @@
   if (!exists(".tidyllm_stream_env", envir = .GlobalEnv)) {
     .GlobalEnv$.tidyllm_stream_env <- new.env(parent = emptyenv())
   }
+
 }
 
 #' @export

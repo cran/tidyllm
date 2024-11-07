@@ -29,6 +29,7 @@ It allows for adding messages, converting messages for API usage, and printing t
 \item \href{#method-LLMMessage-add_message}{\code{LLMMessage$add_message()}}
 \item \href{#method-LLMMessage-to_api_format}{\code{LLMMessage$to_api_format()}}
 \item \href{#method-LLMMessage-has_image}{\code{LLMMessage$has_image()}}
+\item \href{#method-LLMMessage-remove_message}{\code{LLMMessage$remove_message()}}
 \item \href{#method-LLMMessage-print}{\code{LLMMessage$print()}}
 \item \href{#method-LLMMessage-clone}{\code{LLMMessage$clone()}}
 }
@@ -81,7 +82,7 @@ Adds a message to the history. Optionally includes media.
 \if{latex}{\out{\hypertarget{method-LLMMessage-add_message}{}}}
 \subsection{Method \code{add_message()}}{
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{LLMMessage$add_message(role, content, media = NULL)}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{LLMMessage$add_message(role, content, media = NULL, json = FALSE)}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
@@ -91,7 +92,9 @@ Adds a message to the history. Optionally includes media.
 
 \item{\code{content}}{The textual content of the message.}
 
-\item{\code{media}}{Optional; media content to attach to the message.
+\item{\code{media}}{Optional; media content to attach to the message.}
+
+\item{\code{json}}{Is the message a raw string that contains a json response?
 Convert to API format
 
 Converts the message history to a format suitable for various API calls.}
@@ -104,22 +107,31 @@ Converts the message history to a format suitable for various API calls.}
 \if{latex}{\out{\hypertarget{method-LLMMessage-to_api_format}{}}}
 \subsection{Method \code{to_api_format()}}{
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{LLMMessage$to_api_format(api_type, cgpt_image_detail = "auto")}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{LLMMessage$to_api_format(
+  api_type,
+  cgpt_image_detail = "auto",
+  no_system = FALSE
+)}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{api_type}}{The type of API (e.g., "claude","groq","chatgpt").}
+\item{\code{api_type}}{The type of API (e.g., "claude","groq","openai").}
 
-\item{\code{cgpt_image_detail}}{Specific option for ChatGPT API (imagedetail - set to auto)
+\item{\code{cgpt_image_detail}}{Specific option for ChatGPT API (imagedetail - set to auto)}
+
+\item{\code{no_system}}{Without system prompt (default: FALSE)}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+A message history in the target API format
 Simple helper function to determine whether the message history contains
 an image
 We check this function whenever we call models that do not support images
 so we can post a warning to the user that images were found but not sent
-to the model}
-}
-\if{html}{\out{</div>}}
+to the model
 }
 }
 \if{html}{\out{<hr>}}
@@ -132,6 +144,28 @@ to the model}
 
 \subsection{Returns}{
 Returns TRUE if the message hisotry contains images
+Remove a Message by Index
+
+Removes a message from the message history at the specified index.
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-LLMMessage-remove_message"></a>}}
+\if{latex}{\out{\hypertarget{method-LLMMessage-remove_message}{}}}
+\subsection{Method \code{remove_message()}}{
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{LLMMessage$remove_message(index)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{index}}{A positive integer indicating the position of the message to remove.}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+The \code{LLMMessage} object, invisibly.
 }
 }
 \if{html}{\out{<hr>}}

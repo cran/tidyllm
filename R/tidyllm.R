@@ -50,8 +50,9 @@ LLMMessage <- R6::R6Class(
     #' @param role The role of the message sender (e.g., "user", "assistant").
     #' @param content The textual content of the message.
     #' @param media Optional; media content to attach to the message.
-    add_message = function(role, content, media = NULL) {
-      message_details <- list(role = role, content = content)
+    #' @param json Is the message a raw string that contains a json response?
+    add_message = function(role, content, media = NULL,json=FALSE) {
+      message_details <- list(role = role, content = content,json=json)
       if (!is.null(media)) {
         message_details$media <- media
       }
@@ -62,172 +63,91 @@ LLMMessage <- R6::R6Class(
     #' Convert to API format
     #' 
     #' Converts the message history to a format suitable for various API calls.
-    #' @param api_type The type of API (e.g., "claude","groq","chatgpt").
+    #' @param api_type The type of API (e.g., "claude","groq","openai").
     #' @param cgpt_image_detail Specific option for ChatGPT API (imagedetail - set to auto)
-    to_api_format = function(api_type,cgpt_image_detail="auto") {
-      switch(api_type,
-             "claude" = {
-               claude_history <- Filter(function(x){
-                 if ("role" %in% names(x)) {
-                   return(x$role %in% c("user","assistant"))
-                 } else {
-                   return(FALSE)
-                 }},self$message_history)
-               
-               lapply(claude_history, function(m){
-                 #The basic text content supplied with the prompt
-                 base_content <- m$content
-                 
-                 #Get the relevant media for the current message
-                 media_list <- m$media
-                 
-                 #Extract the text content in put it into tags that are put before 
-                 #the main text of the prompt
-                 text_media  <- extract_media(media_list,"text")
-                 image_media <- extract_media(media_list,"image")
-                 
-                 
-                 if(length(image_media)>0){
-                   
-                   image_file_type <- paste("image",
-                                            tools::file_ext(image_media[[1]]$filename), 
-                                            sep = "/")
-                   
-                   # Add image content to the user content
-                   output <- list(role = m$role,
-                                  content = list(
-                                    list(type = "image",
-                                         source = list(
-                                           type = "base64",
-                                           media_type = image_file_type,
-                                           data = image_media[[1]]$content
-                                         )),
-                                    list(type = "text", text = paste(base_content,text_media)))
-                   )
-                 } else {
-                   # Text only content
-                   output <- list(role = m$role, 
-                                  content = list(
-                                    list(type = "text", 
-                                         text = paste(base_content,text_media))
-                                  )
-                   )
-                 }
-                 
-                 output
-               }) 
-             },
-             "groq" = {
-               lapply(self$message_history, function(m){
-                 #The basic text content supplied with the prompt
-                 base_content <- m$content
-                 
-                 #Get the relevant media for the current message
-                 media_list <- m$media
-                 
-                 #Extract the text content in put it into tags that are put before 
-                 #the main text of the prompt
-                 text_media <- extract_media(media_list,"text")
-                 
-                 # Text only content
-                 list(role    = m$role, 
-                      content = paste(base_content,text_media))
-               }) 
-             },
-             "chatgpt" = {
-               lapply(self$message_history, function(m) {
-                 # The basic text content supplied with the prompt
-                 base_content <- m$content
-                 
-                 # Get the relevant media for the current message
-                 media_list <- m$media
-                 
-                 # Extract the text content and put it into tags that are put before 
-                 # the main text of the prompt
-                 text_media <- extract_media(media_list, "text")
-                 image_media <- extract_media(media_list, "image")
-                 
-                 # Combine text content
-                 combined_text <- paste(base_content, text_media, sep=" ")
-                 
-                 if (length(image_media) > 0) {
-                   # Determine the MIME type based on file extension
-                   image_file_type <- paste("image", tools::file_ext(image_media[[1]]$filename), sep="/")
-                   
-                   # Use the pre-encoded base64 image content
-                   base64_image <- image_media[[1]]$content
-                   
-                   # Add image content to the user content
-                   output <- list(
-                     role = m$role,
-                     content = list(
-                       list(type = "text", text = combined_text),
-                       list(type = "image_url", image_url = list(
-                         url = glue::glue("data:{image_file_type};base64,{base64_image}")
-                       ))
-                     )
-                   )
-                 } else {
-                   # Text-only content
-                   output <- list(
-                     role = m$role,
-                     content = combined_text
-                   )
-                 }
-                 
-                 output
-               })
+    #' @param no_system Without system prompt (default: FALSE)
+    #' 
+    #' @return A message history in the target API format
+    to_api_format = function(api_type, cgpt_image_detail = "auto", no_system = FALSE) {
+        
+        # Helper function within to_api_format
+        format_message <- function(message) {
+          base_content <- message$content
+          media_list <- message$media
+          text_media <- extract_media(media_list, "text")
+          image_media <- extract_media(media_list, "image")
+          
+          combined_text <- paste(base_content, text_media, sep = " ")
+          
+          if (length(image_media) > 0) {
+            image_file_type <- paste("image", tools::file_ext(image_media[[1]]$filename), sep = "/")
+            base64_image <- image_media[[1]]$content
             
-              },
-             "ollama"={
-               ollama_history <- Filter(function(x){
-                 if ("role" %in% names(x)) {
-                   return(x$role %in% c("user","assistant"))
-                 } else {
-                   return(FALSE)
-                 }},self$message_history)
-               
-               lapply(ollama_history, function(m) {
-                 # The basic text content supplied with the prompt
-                 base_content <- m$content
-                 
-                 # Get the relevant media for the current message
-                 media_list <- m$media
-                 
-                 # Extract the text content and put it into tags that are put before 
-                 # the main text of the prompt
-                 text_media <- extract_media(media_list, "text")
-                 image_media <- extract_media(media_list, "image")
-                 
-                 # Combine text content
-                 combined_text <- paste(base_content, text_media, sep=" ")
-                 
-                 if (length(image_media) > 0) {
-                   # Determine the MIME type based on file extension
-                   image_file_type <- paste("image", tools::file_ext(image_media[[1]]$filename), sep="/")
-                   
-                   # Use the pre-encoded base64 image content
-                   base64_image <- image_media[[1]]$content
-                   
-                   # Add image content to the user content
-                   output <- list(
-                     role = m$role,
-                     content = combined_text,
-                     images  = list(glue::glue("{base64_image}"))
-                   )
-                 } else {
-                   # Text-only content
-                   output <- list(
-                     role = m$role,
-                     content = combined_text
-                   )
-                 }
-                 
-                 output
-               })
-             }
-             # Additional cases as needed
-      )
+            list(
+              content = combined_text,
+              image = list(type = "base64", media_type = image_file_type, data = base64_image)
+            )
+          } else {
+            list(content = combined_text)
+          }
+        }
+        
+        # Define specific message histories per API requirements
+        openai_history <- if (no_system) filter_roles(self$message_history, c("user", "assistant")) else self$message_history
+        claude_history <- filter_roles(self$message_history, c("user", "assistant"))
+        
+        # Switch logic for API types
+        switch(api_type,
+               "claude" = {
+                 lapply(claude_history, function(m) {
+                   formatted_message <- format_message(m)
+                   if (!is.null(formatted_message$image)) {
+                     list(role = m$role, content = list(
+                       list(type = "image", source = formatted_message$image),
+                       list(type = "text", text = formatted_message$content)
+                     ))
+                   } else {
+                     list(role = m$role, content = list(
+                       list(type = "text", text = formatted_message$content)
+                     ))
+                   }
+                 })
+               },
+               "openai" = {
+                 lapply(openai_history, function(m) {
+                   formatted_message <- format_message(m)
+                   if (!is.null(formatted_message$image)) {
+                     list(
+                       role = m$role,
+                       content = list(
+                         list(type = "text", text = formatted_message$content),
+                         list(type = "image_url", image_url = list(
+                           url = glue::glue("data:{formatted_message$image$media_type};base64,{formatted_message$image$data}")
+                         ))
+                       )
+                     )
+                   } else {
+                     list(role = m$role, content = formatted_message$content)
+                   }
+                 })
+               },
+               "ollama" = {
+                 ollama_history <- filter_roles(self$message_history, c("user", "assistant"))
+                 lapply(ollama_history, function(m) {
+                   formatted_message <- format_message(m)
+                   if (!is.null(formatted_message$image)) {
+                     list(
+                       role = m$role,
+                       content = formatted_message$content,
+                       images = list(glue::glue("{formatted_message$image$data}"))
+                     )
+                   } else {
+                     list(role = m$role, content = formatted_message$content)
+                   }
+                 })
+               },
+               stop("Unknown API-Format specified")
+        )
     },
     
     #' Simple helper function to determine whether the message history contains 
@@ -251,6 +171,22 @@ LLMMessage <- R6::R6Class(
         }) |> max() |> as.logical()
     },
     
+    #' Remove a Message by Index
+    #'
+    #' Removes a message from the message history at the specified index.
+    #' @param index A positive integer indicating the position of the message to remove.
+    #' @return The `LLMMessage` object, invisibly.
+    remove_message = function(index) {
+      # Validate index
+      c(
+        "Index must be a positive integer" = is_integer_valued(index) && index > 0,
+        "Index is out of bounds" = index <= length(self$message_history)
+      ) |> validate_inputs()
+      
+      # Remove the message
+      self$message_history <- self$message_history[-index]
+      invisible(self)
+    },
     #' @description
     #' Prints the current message history in a structured format.
     print = function() {
@@ -276,16 +212,17 @@ LLMMessage <- R6::R6Class(
 #'
 #' This function allows the creation of a new LLMMessage object or the updating of an existing one.
 #' It can handle the addition of text prompts and various media types such as images, PDFs, text files, or plots.
+#' The function includes input validation to ensure that all provided parameters are in the correct format.
 #'
 #' @param .llm An existing LLMMessage object or an initial text prompt.
 #' @param .prompt Text prompt to add to the message history.
 #' @param .role The role of the message sender, typically "user" or "assistant".
 #' @param .system_prompt Default system prompt if a new LLMMessage needs to be created.
 #' @param .imagefile Path to an image file to be attached (optional).
-#' @param .pdf Path to a PDF file to be attached (optional).
+#' @param .pdf Path to a PDF file to be attached (optional). Can be a character vector of length one (file path), or a list with `filename`, `start_page`, and `end_page`.
 #' @param .textfile Path to a text file to be read and attached (optional).
 #' @param .capture_plot Boolean to indicate whether a plot should be captured and attached as an image (optional).
-#' @param .f An R function whose output should be captured and attached (optional).
+#' @param .f An R function or an object coercible to a function via `rlang::as_function`, whose output should be captured and attached (optional).
 #' @return Returns an updated or new LLMMessage object.
 #' @importFrom R6 R6Class
 #' @importFrom jsonlite toJSON
@@ -304,16 +241,25 @@ llm_message <- function(.llm = NULL,
   # Handle media attached to messages
   media_list = list()
   
-  # If .llm is provided, check if it is an LLMMessage object
-  if (!is.character(.llm) & !inherits(.llm, "LLMMessage")) {
-    stop("Input .llm must be an LLMMessage object or an initial text prompt.")
-  }
+  # Validate inputs using the existing validate_inputs function
+  validate_inputs(c(
+    ".llm must be NULL, a character vector, or an LLMMessage object" = is.null(.llm) || is.character(.llm) || inherits(.llm, "LLMMessage"),
+    ".prompt must be a non-empty string if provided" = is.null(.prompt) || (is.character(.prompt) && length(.prompt) == 1 && nchar(.prompt) > 0),
+    ".role must be a non-empty string" = is.character(.role) && length(.role) == 1 && nchar(.role) > 0,
+    ".system_prompt must be a string" = is.character(.system_prompt),
+    ".imagefile must be NULL or a valid file path" = is.null(.imagefile) || (is.character(.imagefile) && length(.imagefile) == 1 && file.exists(.imagefile)),
+    ".pdf must be NULL, a file path, or a list with filename, start_page, and end_page" = is.null(.pdf) ||
+      (is.character(.pdf) && length(.pdf) == 1 && file.exists(.pdf)) ||
+      (is.list(.pdf) && all(c("filename", "start_page", "end_page") %in% names(.pdf)) &&
+         is.character(.pdf$filename) && length(.pdf$filename) == 1 && file.exists(.pdf$filename) &&
+         is.numeric(.pdf$start_page) && is.numeric(.pdf$end_page) && .pdf$start_page >= 1 && .pdf$end_page >= .pdf$start_page),
+    ".textfile must be NULL or a valid file path" = is.null(.textfile) || (is.character(.textfile) && length(.textfile) == 1 && file.exists(.textfile)),
+    ".capture_plot must be logical" = is.logical(.capture_plot) && length(.capture_plot) == 1,
+    ".f must be NULL or coercible to a function via rlang::as_function" = is.null(.f) || (tryCatch({rlang::as_function(.f); TRUE}, error = function(e) FALSE))
+  ))
   
   # Early check whether an llm object existed before
-  pre_existing_object <- TRUE
-  if (inherits(.llm, "LLMMessage")) {
-    pre_existing_object <- TRUE
-  }
+  pre_existing_object <- inherits(.llm, "LLMMessage")
   
   # Handle images or captured plots
   if (!is.null(.imagefile) || .capture_plot) {
@@ -339,20 +285,41 @@ llm_message <- function(.llm = NULL,
     if (!requireNamespace("pdftools", quietly = TRUE)) {
       stop("The 'pdftools' package is required to read PDF files. Please install it.")
     }
-    pdf_text <- pdftools::pdf_text(.pdf) |> 
+    if (is.character(.pdf) && length(.pdf) == 1) {
+      # .pdf is a path to a PDF file
+      pdf_file <- .pdf
+      start_page <- 1
+      pdf_info <- pdftools::pdf_info(pdf_file)
+      total_pages <- pdf_info$pages
+      end_page <- total_pages
+    } else if (is.list(.pdf)) {
+      # .pdf is a list with filename, start_page, end_page
+      pdf_file <- .pdf$filename
+      start_page <- .pdf$start_page
+      end_page <- .pdf$end_page
+      if (start_page < 1) {
+        warning("start_page is less than 1. Setting start_page to 1.")
+        start_page <- 1
+      }
+      pdf_info <- pdftools::pdf_info(pdf_file)
+      total_pages <- pdf_info$pages
+      if (end_page > total_pages) {
+        warning("end_page is greater than total pages. Setting end_page to total pages.")
+        end_page <- total_pages
+      }
+    } else {
+      stop(".pdf must be either a file path (character vector of length 1) or a list with filename, start_page, and end_page.")
+    }
+    # Read the specified pages
+    pdf_text <- pdftools::pdf_text(pdf_file)[start_page:end_page] |> 
       stringr::str_c(collapse = "\n")
-    
-    media_list <- c(media_list, list(list(type = "PDF", content = pdf_text, filename = basename(.pdf))))
+    media_list <- c(media_list, list(list(type = "PDF", content = pdf_text, filename = basename(pdf_file))))
   }
   
   # Handle text files
   if (!is.null(.textfile)) {
-    if (!file.exists(.textfile)) {
-      stop("The specified text file does not exist.")
-    }
     text_content <- readLines(.textfile) |> 
       stringr::str_c(collapse = "\n")
-    
     media_list <- c(media_list, list(list(type = "TextFile", content = text_content, filename = basename(.textfile))))
   }
   
@@ -360,20 +327,13 @@ llm_message <- function(.llm = NULL,
   if (!is.null(.f)) {
     output <- utils::capture.output(rlang::as_function(.f)(), file = NULL) |> 
       stringr::str_c(collapse = "\n")
-    
     media_list <- c(media_list, list(list(type = "RConsole", content = output, filename = "RConsole.txt")))
   }
   
-  # If a character vector is supplied instead of an llm, we use it as an initial prompt
+  # If a character vector is supplied instead of an llm, use it as an initial prompt
   if (is.character(.llm)) {
     initial_prompt <- .llm
-    # Validate input prompt in case a prompt is used instead of a llm message object
-    if (length(.llm) == 0) {
-      stop("Prompt must be a non-empty string.")
-    }
-    
     .llm <- LLMMessage$new(.system_prompt)
-    
     if (is.null(.prompt)) {
       .llm$add_message(.role, initial_prompt, media_list)
       return(.llm)
@@ -385,25 +345,22 @@ llm_message <- function(.llm = NULL,
     .llm <- LLMMessage$new(.system_prompt)
   }
   
-  # Explicit prompts have precedent over ones supplied via .llm
-  if (!is.null(.prompt) & !pre_existing_object) {
-    if ((length(.prompt) == 0) | !is.character(.prompt)) {
-      stop("Prompt must be a non-empty string.")
-    }
+  # Explicit prompts have precedence over ones supplied via .llm
+  if (!is.null(.prompt) && !pre_existing_object) {
     .llm$add_message(.role, .prompt, media_list)
     return(.llm)
   }
   
   # Deep copy output so original object is never changed
-  if (!is.null(.prompt) & pre_existing_object) {
-    if ((length(.prompt) == 0) | !is.character(.prompt)) {
-      stop("Prompt must be a non-empty string.")
-    }
+  if (!is.null(.prompt) && pre_existing_object) {
     llm_copy <- .llm$clone_deep()
     llm_copy$add_message(.role, .prompt, media_list)
     return(llm_copy)
   }
 }
+
+
+
 
 
 #' Convert a Data Frame to an LLMMessage Object
@@ -419,17 +376,6 @@ llm_message <- function(.llm = NULL,
 #'
 #' @return An LLMMessage object containing the structured messages as per the input data frame.
 #'
-#' @examples
-#' # Example data frame with role and content
-#'df_example <- data.frame(
-#'  role = c("system", "user", "assistant","user"),
-#'  content = c("You allways only answer with two words", 
-#'               "Why is the sky blue?", 
-#'               "Rayleigh scattering",
-#'               "Why is the sun yellow?"),
-#'  stringsAsFactors = FALSE
-#')
-#'df_llm_message(df_example)
 #'
 #' @export
 df_llm_message <- function(.df){
@@ -463,50 +409,5 @@ df_llm_message <- function(.df){
   }
   return(final_message)
 }
-
-#' Retrieve Last Reply from an Assistant
-#'
-#' This function extracts the last reply made by the assistant from a given LLMMessage object.
-#' It is particularly useful for fetching the most recent response from the assistant to display
-#' or log it separately.
-#'
-#' @param .llm An LLMMessage object containing the history of messages exchanged.
-#'             This must be a valid LLMMessage object; otherwise, the function will stop with an error.
-#' @param .json Should structured json data from the last reply be returned as R list (default: FALSE)
-#' @return Returns the content of the last reply made by the assistant. If the assistant
-#'         has not replied yet, or if there are no assistant messages in the history, `NULL` is returned.
-#' @export
-#'
-#' @seealso \code{\link{LLMMessage}} for details on the message object structure.
-#'
-#' @note This function only returns the content of the last assistant message and does not include
-#'       media or other types of content that might be attached to the message.
-#'
-#'
-#' @rdname last_reply
-last_reply <- function(.llm  = NULL,
-                       .json = FALSE) {
-  # Check if .llm is provided and is a valid LLMMessage object
-  c(
-    "Input .llm must be an LLMMessage object" = inherits(.llm, "LLMMessage"),
-    "Input .json must be logical if provided" = is.logical(.json)
-  ) |>
-    validate_inputs()
-  
-  # Filter out all messages from the assistant
-  assistant_replies <- Filter(function(x) x$role == "assistant", .llm$message_history)
-  
-  # Extract the last assistant reply, if available
-  last_reply <- assistant_replies[length(assistant_replies)]
-  if (length(last_reply) > 0) {
-    if(.json==FALSE){ return(last_reply[[1]]$content)}
-    if(.json==TRUE){  return(jsonlite::fromJSON(last_reply[[1]]$content))}
-    
-  } else {
-    return(NULL)
-  }
-}
-
-
 
 
