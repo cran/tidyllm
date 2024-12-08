@@ -39,4 +39,3 @@ extract_media <- function(.media_list,.type){
   return(out)
 }
 
-#Future functions to extract media from responses or pre-process other media will go here. 

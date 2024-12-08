@@ -1,38 +1,41 @@
 ## ----eval= FALSE, echo=TRUE---------------------------------------------------
-#  install.packages("tidyllm")
+# install.packages("tidyllm")
 
 ## ----eval= FALSE, echo=TRUE---------------------------------------------------
-#  # Install devtools if not already installed
-#  if (!requireNamespace("devtools", quietly = TRUE)) {
-#    install.packages("devtools")
-#  }
-#  
-#  # Install TidyLLM from GitHub
-#  devtools::install_github("edubruell/tidyllm")
+# # Install devtools if not already installed
+# if (!requireNamespace("devtools", quietly = TRUE)) {
+#   install.packages("devtools")
+# }
+# 
+# # Install TidyLLM from GitHub
+# devtools::install_github("edubruell/tidyllm")
 
 ## ----eval= FALSE, echo=TRUE---------------------------------------------------
-#  Sys.setenv(ANTHROPIC_API_KEY = "YOUR-ANTHROPIC-API-KEY")
+# Sys.setenv(ANTHROPIC_API_KEY = "YOUR-ANTHROPIC-API-KEY")
 
 ## ----eval= FALSE, echo=TRUE---------------------------------------------------
-#  Sys.setenv(OPENAI_API_KEY = "YOUR-OPENAI-API-KEY")
+# Sys.setenv(OPENAI_API_KEY = "YOUR-OPENAI-API-KEY")
 
 ## ----eval= FALSE, echo=TRUE---------------------------------------------------
-#  Sys.setenv(GROQ_API_KEY = "YOUR-GROQ-API-KEY")
+# Sys.setenv(GROQ_API_KEY = "YOUR-GROQ-API-KEY")
 
 ## ----eval= FALSE, echo=TRUE---------------------------------------------------
-#  ANTHROPIC_API_KEY="YOUR-ANTHROPIC-API-KEY"
+# Sys.setenv(PERPLEXITY_API_KEY = "YOUR-PERPLEXITY-API-KEY")
+
+## ----eval= FALSE, echo=TRUE---------------------------------------------------
+# ANTHROPIC_API_KEY="YOUR-ANTHROPIC-API-KEY"
 
 ## ----convo1,  eval=FALSE, echo=TRUE-------------------------------------------
-#  library(tidyllm)
-#  
-#  # Start a conversation with Claude
-#  conversation <- llm_message("What is the capital of France?") |>
-#    claude()
-#  
-#  #Standard way that llm_messages are printed
-#  conversation
+# library(tidyllm)
+# 
+# # Start a conversation with Claude
+# conversation <- llm_message("What is the capital of France?") |>
+#   chat(claude())
+# 
+# #Standard way that llm_messages are printed
+# conversation
 
-## ----convo1_out,  eval=TRUE, echo=FALSE---------------------------------------
+## ----convo1_out,  eval=TRUE, echo=FALSE,message=FALSE-------------------------
 library(tidyllm)
 
 #Easier than mocking. httptest2 caused a few issues with my vignette
@@ -42,38 +45,38 @@ conversation <- llm_message("What is the capital of France?") |>
 conversation
 
 ## ----convo2,  eval=FALSE, echo=TRUE-------------------------------------------
-#  # Continue the conversation with ChatGPT
-#  conversation <- conversation |>
-#    llm_message("What's a famous landmark in this city?") |>
-#    openai()
-#  
-#  get_reply(conversation)
+# # Continue the conversation with ChatGPT
+# conversation <- conversation |>
+#   llm_message("What's a famous landmark in this city?") |>
+#   chat(openai)
+# 
+# get_reply(conversation)
 
 ## ----convo2_out,  eval=TRUE, echo=FALSE---------------------------------------
 c("A famous landmark in Paris is the Eiffel Tower.")
 
-## ----echo=FALSE, out.width="70%"----------------------------------------------
+## ----echo=FALSE, out.width="70%", fig.alt="A photograhp showing lake Garda and the scenery near Torbole, Italy."----
 knitr::include_graphics("picture.jpeg")
 
 ## ----images,  eval=FALSE, echo=TRUE-------------------------------------------
-#  # Describe an image using a llava model on ollama
-#  image_description <- llm_message("Describe this picture? Can you guess where it was made?",
-#                                   .imagefile = "picture.jpeg") |>
-#    openai(.model = "gpt-4o")
-#  
-#  # Get the last reply
-#  get_reply(image_description)
+# # Describe an image using a llava model on ollama
+# image_description <- llm_message("Describe this picture? Can you guess where it was made?",
+#                                  .imagefile = "picture.jpeg") |>
+#   chat(openai(.model = "gpt-4o"))
+# 
+# # Get the last reply
+# get_reply(image_description)
 
 ## ----images_out,  eval=TRUE, echo=FALSE---------------------------------------
 c("The picture shows a beautiful landscape with a lake, mountains, and a town nestled below. The sun is shining brightly, casting a serene glow over the water. The area appears lush and green, with agricultural fields visible. \n\nThis type of scenery is reminiscent of northern Italy, particularly around Lake Garda, which features similar large mountains, picturesque water, and charming towns.")
 
 ## ----eval=FALSE, echo=TRUE----------------------------------------------------
-#  install.packages("pdftools")
+# install.packages("pdftools")
 
 ## ----pdf,  eval=FALSE, echo=TRUE----------------------------------------------
-#  llm_message("Please summarize the key points from the provided PDF document.",
-#       .pdf = "die_verwandlung.pdf") |>
-#       openai(.model = "gpt-4o-mini")
+# llm_message("Please summarize the key points from the provided PDF document.",
+#      .pdf = "die_verwandlung.pdf") |>
+#      chat(openai(.model = "gpt-4o-mini"))
 
 ## ----pdf_out,  eval=TRUE, echo=FALSE------------------------------------------
   llm_message("Please summarize the key points from the provided PDF document.", 
@@ -100,11 +103,11 @@ ggplot(mtcars, aes(wt, mpg)) +
   labs(x="Weight",y="Miles per gallon")
 
 ## ----routputs_base_out,  eval=FALSE, echo=TRUE--------------------------------
-#  library(tidyverse)
-#  llm_message("Analyze this plot and data summary:",
-#                    .capture_plot = TRUE, #Send the plot pane to a model
-#                    .f = ~{summary(mtcars)}) |> #Run summary(data) and send the output
-#    claude()
+# library(tidyverse)
+# llm_message("Analyze this plot and data summary:",
+#                   .capture_plot = TRUE, #Send the plot pane to a model
+#                   .f = ~{summary(mtcars)}) |> #Run summary(data) and send the output
+#   chat(claude())
 
 ## ----routputs_base_rq,  eval=TRUE, echo=FALSE---------------------------------
 # Create a plot for the mtcars example data
@@ -115,12 +118,12 @@ llm_message("Analyze this plot and data summary:",
   llm_message("Based on the plot and data summary provided, here's an analysis:\n\n1. Relationship between Weight and MPG:\n   The scatter plot shows a clear negative correlation between weight (wt) and miles per gallon (mpg). As the weight of the car increases, the fuel efficiency (mpg) decreases.\n\n2. Linear Trend:\n   The blue line in the plot represents a linear regression fit. The downward slope confirms the negative relationship between weight and mpg.\n\n3. Data Distribution:\n   - The weight of cars in the dataset ranges from 1.513 to 5.424 (likely in thousands of pounds).\n   - The mpg values range from 10.40 to 33.90.\n\n4. Variability:\n   There's some scatter around the regression line, indicating that while weight is a strong predictor of mpg, other factors also influence fuel efficiency.\n\n5. Other Variables:\n   While not shown in the plot, the summary statistics provide information on other variables:\n   - Cylinder count (cyl) ranges from 4 to 8, with a median of 6.\n   - Horsepower (hp) ranges from 52 to 335, with a mean of 146.7.\n   - Transmission type (am) is binary (0 or 1), likely indicating automatic vs. manual.\n\n6. Model Fit:\n   The grey shaded area around the regression line represents the confidence interval. It widens at the extremes of the weight range, indicating less certainty in predictions for very light or very heavy vehicles.\n\n7. Outliers:\n   There are a few potential outliers, particularly at the lower and higher ends of the weight spectrum, that deviate from the general trend.\n\nIn conclusion, this analysis strongly suggests that weight is a significant factor in determining a car's fuel efficiency, with heavier cars generally having lower mpg. However, the presence of scatter in the data indicates that other factors (possibly related to engine characteristics, transmission type, or aerodynamics) also play a role in determining fuel efficiency.",.role="assistant")
 
 ## ----eval=FALSE,echo=TRUE-----------------------------------------------------
-#  conversation <- llm_message("Imagine a German adress.") |>
-#       groq() |>
-#       llm_message("Imagine another address") |>
-#       groq()
-#  
-#  conversation
+# conversation <- llm_message("Imagine a German adress.") |>
+#      chat(groq()) |>
+#      llm_message("Imagine another address") |>
+#      chat(claude())
+# 
+# conversation
 
 ## ----eval=TRUE,echo=FALSE-----------------------------------------------------
 conversation <-  llm_message("Imagine a German adress.") |>
@@ -132,55 +135,71 @@ conversation <-  llm_message("Imagine a German adress.") |>
 conversation
 
 ## ----standard_last_reply,  eval=TRUE, echo=TRUE-------------------------------
-#Getting the first 
+#Getting the first reply
 conversation |> get_reply(1)
 #By default it gets the last reply
 conversation |> get_reply()
-#Or if you can more easily remember last_reply this works too
-conversation |> last_reply()
+
+## ----as_tibble,  eval=TRUE, echo=TRUE-----------------------------------------
+conversation |> as_tibble()
+
+## ----get_metadata,  eval=FALSE, echo=TRUE-------------------------------------
+# conversation |> get_metadata()
+
+## ----get_metadata_out,  eval=TRUE, echo=FALSE---------------------------------
+tibble::tibble(
+  model = c("groq-lamma3-11b", "claude-3-5-sonnet"),
+  timestamp = as.POSIXct(c("2024-11-08 14:25:43", "2024-11-08 14:26:02")),
+  prompt_tokens = c(20, 80),
+  completion_tokens = c(45, 40),
+  total_tokens = prompt_tokens + completion_tokens,
+  api_specific = list(list(name1 = "",name2=20,name=30))
+) |>
+  print(width=60)
 
 ## ----schema,  eval=FALSE, echo=TRUE-------------------------------------------
-#  address_schema <- tidyllm_schema(
-#    name = "AddressSchema",
-#    street = "character",
-#    houseNumber = "numeric",
-#    postcode = "character",
-#    city = "character",
-#    region = "character",
-#    country = "factor(Germany,France)"
-#  )
-#  address <- llm_message("Imagine an address in JSON format that matches the schema.") |>
-#          openai(.json_schema = address_schema)
-#  address
+# address_schema <- tidyllm_schema(
+#   name = "AddressSchema",
+#   street = "character",
+#   houseNumber = "numeric",
+#   postcode = "character",
+#   city = "character",
+#   region = "character",
+#   country = "factor(Germany,France)"
+# )
+# address <- llm_message("Imagine an address in JSON format that matches the schema.") |>
+#         chat(openai(),.json_schema = address_schema)
+# address
 
 ## ----schema_out,  eval=TRUE, echo=FALSE---------------------------------------
-address_base <- llm_message("Imagine an address in JSON format that matches the schema.") 
-address <- address_base$add_message(role = "assistant",
-                           content = '{"street":"Hauptstraße","houseNumber":123,"postcode":"10115","city":"Berlin","region":"Berlin","country":"Germany"}',
-                           media = NULL,
-                           json = TRUE) 
-
+address <- llm_message("Imagine an address in JSON format that matches the schema.") |>
+ llm_message('{"street":"Hauptstraße","houseNumber":123,"postcode":"10115","city":"Berlin","region":"Berlin","country":"Germany"}',.role="assistant")
+address@message_history[[3]]$json <- TRUE
 address
 
 ## ----get_reply_data-----------------------------------------------------------
 address |> get_reply_data() |> str()
 
 ## ----temperature,  eval=FALSE, echo=TRUE--------------------------------------
-#    temp_example <- llm_message("Explain how temperature parameters work in large language models  and why temperature 0 gives you deterministic outputs in one sentence.")
-#  
-#    #per default it is non-zero
-#    temp_example |> ollama(.temperature=0)
+#   temp_example <- llm_message("Explain how temperature parameters work
+# in large language models and why temperature 0 gives you deterministic outputs
+# in one sentence.")
+# 
+#   #per default it is non-zero
+#   temp_example |> chat(ollama,.temperature=0)
 
 ## ----temperature_out,  eval=TRUE, echo=FALSE----------------------------------
-  temp_example <- llm_message("Explain how temperature parameters work in large language models  and why temperature 0 gives you deterministic outputs in one sentence.")
+  temp_example <- llm_message("Explain how temperature parameters work 
+in large language models  and why temperature 0 gives you deterministic
+outputs in one sentence.")
 
   temp_example |>
     llm_message("In large language models, temperature parameters control the randomness of generated text by scaling the output probabilities, with higher temperatures introducing more uncertainty and lower temperatures favoring more likely outcomes; specifically, setting temperature to 0 effectively eliminates all randomness, resulting in deterministic outputs because it sets the probability of each token to its maximum likelihood value.",
                 .role="assistant")
 
 ## ----temp2,  eval=FALSE, echo=TRUE--------------------------------------------
-#    #Retrying with .temperature=0
-#    temp_example |> ollama(.temperature=0)
+#   #Retrying with .temperature=0
+#   temp_example |> chat(ollama,.temperature=0)
 
 ## ----temp2_out,  eval=TRUE, echo=FALSE----------------------------------------
   temp_example |>
@@ -188,23 +207,44 @@ address |> get_reply_data() |> str()
                 .role="assistant")
 
 ## ----eval=FALSE---------------------------------------------------------------
-#  #Create a message batch and save it to disk to fetch it later
-#  glue("Write a poem about {x}", x=c("cats","dogs","hamsters")) |>
-#    purrr::map(llm_message) |>
-#    send_claude_batch() |>
-#    saveRDS("claude_batch.rds")
+# conversation <- llm_message("Hello") |>
+#   chat(ollama(.ollama_server = "http://localhost:11434"),
+#        .temperature = 0)
 
 ## ----eval=FALSE---------------------------------------------------------------
-#  #Create a message batch and save it to disk to fetch it later
-#  glue("Write a poem about {x}", x=c("cats","dogs","hamsters")) |>
-#    purrr::map(llm_message) |>
-#    send_claude_batch() |>
-#    saveRDS("claude_batch.rds")
+# #This uses GPT-4o
+# conversation <- llm_message("Hello") |>
+#   chat(openai(.model="gpt-4o-mini"),
+#        .model="gpt-4o")
+
+## ----eval = FALSE-------------------------------------------------------------
+# address <- llm_message("Imagine an address in JSON format that matches the schema.") |>
+#         chat(groq(),.json_schema = address_schema)
+
+## ----embed, eval=FALSE, echo=TRUE---------------------------------------------
+# c("What is the meaning of life?",
+#   "How much wood would a woodchuck chuck?",
+#   "How does the brain work?") |>
+#   embed(ollama)
+
+## ----embed_output, eval=TRUE, echo=FALSE--------------------------------------
+tibble::tibble(
+  input = c("What is the meaning of life?",
+            "How much wood would a woodchuck chuck?",
+            "How does the brain work?") ,
+  embeddings = purrr::map(1:3,~{runif(min = -1,max=1,n=384)}))
 
 ## ----eval=FALSE---------------------------------------------------------------
-#  #Check the status of the batch
-#  readRDS("claude_batch.rds") |>
-#     check_claude_batch()
+# #Create a message batch and save it to disk to fetch it later
+# glue("Write a poem about {x}", x=c("cats","dogs","hamsters")) |>
+#   purrr::map(llm_message) |>
+#   send_batch(claude()) |>
+#   saveRDS("claude_batch.rds")
+
+## ----eval=FALSE---------------------------------------------------------------
+# #Check the status of the batch
+# readRDS("claude_batch.rds") |>
+#    check_batch(claude())
 
 ## ----echo=FALSE---------------------------------------------------------------
 tribble(
@@ -213,8 +253,78 @@ tribble(
 )
 
 ## ----eval=FALSE---------------------------------------------------------------
-#  conversations <- readRDS("claude_batch.rds") |>
-#    fetch_claude_batch()
-#  
-#  poems <- map_chr(conversations, get_reply)
+# conversations <- readRDS("claude_batch.rds") |>
+#   fetch_batch(claude())
+# 
+# poems <- map_chr(conversations, get_reply)
+
+## ----eval=FALSE---------------------------------------------------------------
+# llm_message("Write a lengthy magazine advertisement for an R package called tidyllm") |>
+#   chat(claude,.stream=TRUE)
+
+## ----eval=FALSE---------------------------------------------------------------
+# llm_message("What is tidyllm and who maintains this package?") |>
+#   gemini_chat(.grounding_threshold = 0.3)
+
+## ----eval=FALSE---------------------------------------------------------------
+# #Upload a file for use with gemini
+# upload_info <- gemini_upload_file("example.mp3")
+# 
+# #Make the file available during a Gemini API call
+# llm_message("Summarize this speech") |>
+#   chat(gemini(.fileid = upload_info$name))
+# 
+# #Delte the file from the Google servers after you are done
+# gemini_delete_file(upload_info$name)
+
+## ----eval=FALSE---------------------------------------------------------------
+# my_provider <- openai(.model="llama3.2:90b",
+#           .api_url="http://localhost:11434",
+#           .compatible = TRUE,
+#           .api_path = "/v1/chat/custom/"
+#           )
+# 
+# llm_message("Hi there") |>
+#   chat(my_provider)
+
+## ----eval=FALSE---------------------------------------------------------------
+# # Set default providers
+# #chat provider
+# options(tidyllm_chat_default = openai(.model = "gpt-4o"))
+# #embedding provider
+# options(tidyllm_embed_default = ollama(.model = "all-minilm"))
+# #send batch provider
+# options(tidyllm_sbatch_default = claude(.temperature=0))
+# #check batch provider
+# options(tidyllm_cbatch_default = claude())
+# #fetch batch provider
+# options(tidyllm_fbatch_default = claude())
+# #List batches provider
+# options(tidyllm_lbatch_default = claude())
+# 
+# # Now you can use chat() or embed() without explicitly specifying a provider
+# conversation <- llm_message("Hello, what is the weather today?") |>
+#   chat()
+# 
+# embeddings <- c("What is AI?", "Define machine learning.") |>
+#   embed()
+# 
+# # Now you can use batch functions without explicitly specifying a provider
+# batch_messages <- list(
+#   llm_message("Write a poem about the sea."),
+#   llm_message("Summarize the theory of relativity."),
+#   llm_message("Invent a name for a new genre of music.")
+# )
+# 
+# # Send batch using default for send_batch()
+# batch_results <- batch_messages |> send_batch()
+# 
+# # Check batch status using default for check_batch()
+# status <- check_batch(batch_results)
+# 
+# # Fetch completed results using default for fetch_batch()
+# completed_results <- fetch_batch(batch_results)
+# 
+# # List all batches using default for list_batches()
+# all_batches <- list_batches()
 

@@ -51,3 +51,96 @@ filter_roles = function(.message_history,
   Filter(function(x) "role" %in% names(x) && x$role %in% .roles, .message_history)
 }
 
+#' @title Guess MIME Type from File Extension
+#' @description Internal utility function to guess the MIME type of a file based on its extension.
+#' This function provides a mapping of common file extensions to their respective MIME types.
+#' 
+#' @param file_path A string representing the path to the file.
+#' 
+#' @return A character vector of possible MIME types, or "application/octet-stream" if the extension is unknown.
+#' 
+#' @importFrom rlang %||%
+#' @noRd
+guess_mime_type <- function(file_path) {
+  # Extract the file extension
+  ext <- tools::file_ext(file_path)
+  
+  # Define a mapping of extensions to MIME types
+  mime_types <- list(
+    pdf = "application/pdf",
+    txt = "text/plain",
+    html = "text/html",
+    css = "text/css",
+    md = "text/md",
+    csv = "text/csv",
+    xml = "text/xml",
+    rtf = "text/rtf",
+    js =  "text/javascript",
+    py =  "text/x-python",
+    png = "image/png",
+    jpeg = "image/jpeg",
+    jpg = "image/jpeg",
+    webp = "image/webp",
+    heic = "image/heic",
+    heif = "image/heif",
+    mp4 = "video/mp4",
+    mpeg = "video/mpeg",
+    mov = "video/mov",
+    avi = "video/avi",
+    flv = "video/x-flv",
+    mpg = "video/mpg",
+    webm = "video/webm",
+    wmv = "video/wmv",
+    `3gpp` = "video/3gpp",
+    wav = "audio/wav",
+    mp3 = "audio/mp3",
+    aiff = "audio/aiff",
+    aac = "audio/aac",
+    ogg = "audio/ogg",
+    flac = "audio/flac"
+  )
+  
+  # Return the corresponding MIME type(s) or a default value
+  mime_types[[tolower(ext)]] %||% "application/octet-stream"
+}
+
+#' Parse Embedding Input
+#'
+#' This function processes an .input for embedding functions, extracting and combining message content
+#' and any associated text media. If the input is a character vector, it is returned as is.
+#' 
+#' @param .input The input object, either a character vector or a list containing message history.
+#' @return A character vector containing the combined message texts.
+#' @noRd
+parse_embedding_input <- function(.input) {
+  if (!is.character(.input)) {
+   history <- Filter(function(x) {
+      if ("role" %in% names(x)) {
+        return(x$role %in% c("user", "assistant"))
+      } else {
+        return(FALSE)
+      }
+    }, .input@message_history)
+    
+    # Extract messages and combine content and text media
+    message_texts <- purrr::map_chr(history, function(m) {
+      # The basic text content supplied with the message
+      base_content <- m$content
+      
+      # Get the relevant media for the current message
+      media_list <- m$media
+      
+      # Extract the text content from media
+      text_media <- extract_media(media_list, "text")
+      text_media_combined <- paste(unlist(text_media), collapse = " ")
+      
+      # Combine base content and text media
+      combined_text <- paste(base_content, text_media_combined, sep = " ")
+      combined_text
+    })
+  } else {
+    message_texts <- .input
+  }
+  
+  return(message_texts)
+}

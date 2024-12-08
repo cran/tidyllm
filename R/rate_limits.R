@@ -5,7 +5,7 @@
 #' specific to an API. It ensures that each API's rate limit data is stored separately.
 #'
 #' @param .api_name The name of the API for which to initialize or retrieve the environment
-#' @export
+#' @noRd
 initialize_api_env <- function(.api_name) {
   if (!exists(.api_name, envir = .tidyllm_rate_limit_env)) {
     .tidyllm_rate_limit_env[[.api_name]] <- new.env()
@@ -14,30 +14,50 @@ initialize_api_env <- function(.api_name) {
 }
 
 
-#' Update the standard API rate limit info in the hidden .tidyllm_rate_limit_env environment
-#'
-#' This function initializes stores ratelimit information from API functions for future use
+#' Track the standard API rate limit info in the hidden .tidyllm_rate_limit_env environment
 #'
 #' @param .api_name The name of the API for which to initialize or retrieve the environment.
-#' @param .response_object A preparsed response object cotaining info on remaining requests, tokens and rest times
-#' @export
-update_rate_limit <- function(.api_name,.response_object){
-  initialize_api_env(.api_name=.api_name)
-  .tidyllm_rate_limit_env[[.api_name]]$last_request        <- .response_object$this_request_time
-  .tidyllm_rate_limit_env[[.api_name]]$requests_remaining  <- .response_object$ratelimit_requests_remaining
-  .tidyllm_rate_limit_env[[.api_name]]$requests_reset_time <- .response_object$ratelimit_requests_reset_time
-  .tidyllm_rate_limit_env[[.api_name]]$tokens_remaining    <- .response_object$ratelimit_tokens_remaining
-  .tidyllm_rate_limit_env[[.api_name]]$tokens_reset_time   <- .response_object$ratelimit_tokens_reset_time
+#' @param .headers The response headers from an API-answer.
+#' @param .verbose Logical indicating whether to print rate limit details.
+#' 
+#' @noRd
+track_rate_limit <- function(.api,.headers,.verbose) {
+  api            <- .api@short_name
+  api_long_name  <- .api@long_name
+  tryCatch({
+    rl <- ratelimit_from_header(.api, .headers)
+    
+    initialize_api_env(api)
+    .tidyllm_rate_limit_env[[api]]$last_request        <- rl$this_request_time
+    .tidyllm_rate_limit_env[[api]]$requests_remaining  <- rl$ratelimit_requests_remaining
+    .tidyllm_rate_limit_env[[api]]$requests_reset_time <- rl$ratelimit_requests_reset_time
+    .tidyllm_rate_limit_env[[api]]$tokens_remaining    <- rl$ratelimit_tokens_remaining
+    .tidyllm_rate_limit_env[[api]]$tokens_reset_time   <- rl$ratelimit_tokens_reset_time
+    
+    # Show rate limit info if verbose
+    if (.verbose) {
+      glue::glue(
+        "{api_long_name} answer received at {rl$this_request_time}.
+        Remaining requests rate limit: {rl$ratelimit_requests_remaining}/{rl$ratelimit_requests}
+        Requests rate limit reset at: {rl$ratelimit_requests_reset_time}
+        Remaining tokens rate limit: {rl$ratelimit_tokens_remaining}/{rl$ratelimit_tokens}
+        Tokens rate limit reset at: {rl$ratelimit_tokens_reset_time}\n"
+      ) |> message()
+    }
+    
+  }, error = function(e) {
+    warning(glue::glue("Failed to track rate limit for {api_long_name}: {e$message}"))
+  })
+  
   invisible(NULL)
 }
-
 
 #'
 #'This internal function parses duration strings as returned by the OpenAI API
 #'
 #' @param .duration_str A duration string. 
 #' @return A numeric number of seconds 
-# Function to parse various time formats into seconds
+#' @noRd
 parse_duration_to_seconds <- function(.duration_str) {
   if(grepl("ms", .duration_str)) {
     # Format is in milliseconds, e.g., "176ms"
@@ -58,104 +78,6 @@ parse_duration_to_seconds <- function(.duration_str) {
 }
 
 
-#' Extract rate limit information from API response headers
-#'
-#' @param .response_headers Headers from the API response
-#' @param .api The API type ("claude", "openai","groq")
-#' @return A list containing rate limit information
-ratelimit_from_header <- function(.response_headers, .api) {
-  switch(.api,
-         "claude" = {
-           list(
-             this_request_time = strptime(.response_headers["date"], 
-                                          format="%a, %d %b %Y %H:%M:%S", tz="GMT"),
-             ratelimit_requests = as.integer(
-               .response_headers["anthropic-ratelimit-requests-limit"]),
-             ratelimit_requests_remaining = as.integer(
-               .response_headers["anthropic-ratelimit-requests-remaining"]),
-             ratelimit_requests_reset_time = as.POSIXct(
-               .response_headers["anthropic-ratelimit-requests-reset"]$`anthropic-ratelimit-requests-reset`,
-               format="%Y-%m-%dT%H:%M:%SZ", tz="UTC"),
-             ratelimit_tokens = as.integer(
-               .response_headers["anthropic-ratelimit-tokens-limit"]),
-             ratelimit_tokens_remaining = as.integer(
-               .response_headers["anthropic-ratelimit-tokens-remaining"]),
-             ratelimit_tokens_reset_time = as.POSIXct(
-               .response_headers["anthropic-ratelimit-tokens-reset"]$`anthropic-ratelimit-tokens-reset`,
-               format="%Y-%m-%dT%H:%M:%SZ", tz="UTC")
-           )
-         },
-         "openai" = {
-           request_time <- strptime(.response_headers["date"]$date, 
-                                    format="%a, %d %b %Y %H:%M:%S", tz="GMT")
-           ratelimit_requests_reset_dt <- parse_duration_to_seconds(
-             .response_headers["x-ratelimit-reset-requests"]$`x-ratelimit-reset-requests`)
-           ratelimit_tokens_reset_dt <- parse_duration_to_seconds(
-             .response_headers["x-ratelimit-reset-tokens"]$`x-ratelimit-reset-tokens`)
-           
-           list(
-             this_request_time = request_time,
-             ratelimit_requests = as.integer(
-               .response_headers["x-ratelimit-limit-requests"]),
-             ratelimit_requests_remaining = as.integer(
-               .response_headers["x-ratelimit-remaining-requests"]),
-             ratelimit_requests_reset_time = request_time + ratelimit_requests_reset_dt,
-             ratelimit_tokens = as.integer(
-               .response_headers["x-ratelimit-limit-tokens"]),
-             ratelimit_tokens_remaining = as.integer(
-               .response_headers["x-ratelimit-remaining-tokens"]),
-             ratelimit_tokens_reset_time = request_time + ratelimit_tokens_reset_dt
-           )
-         },
-         "groq" ={
-           #Do some parsing for the rl list 
-           request_time                  <- strptime(.response_headers["date"]$date, format="%a, %d %b %Y %H:%M:%S", tz="GMT")
-           ratelimit_requests_reset_dt   <- parse_duration_to_seconds(.response_headers["x-ratelimit-reset-requests"]$`x-ratelimit-reset-requests`)
-           ratelimit_requests_reset_time <- request_time + ratelimit_requests_reset_dt
-           ratelimit_tokens_reset_dt     <- parse_duration_to_seconds(.response_headers["x-ratelimit-reset-tokens"]$`x-ratelimit-reset-tokens`)
-           ratelimit_tokens_reset_time   <- request_time + ratelimit_tokens_reset_dt
-           
-           #Ratelimit list
-           list(
-             this_request_time             = request_time ,
-             ratelimit_requests            = as.integer(.response_headers["x-ratelimit-limit-requests"]),
-             ratelimit_requests_remaining  = as.integer(.response_headers["x-ratelimit-remaining-requests"]),
-             ratelimit_requests_reset_time = ratelimit_requests_reset_time ,
-             ratelimit_tokens              = as.integer(.response_headers["x-ratelimit-limit-tokens"]),
-             ratelimit_tokens_remaining    = as.integer(.response_headers["x-ratelimit-remaining-tokens"]),
-             ratelimit_tokens_reset_time   = ratelimit_tokens_reset_time
-           )
-         },
-         "azure_openai" = {
-           request_time <- strptime(.response_headers["date"]$date, 
-                                    format="%a, %d %b %Y %H:%M:%S", tz="GMT")
-           
-           # Extract remaining requests and tokens
-           ratelimit_requests_remaining <- as.integer(
-             .response_headers["x-ratelimit-remaining-requests"]$`x-ratelimit-remaining-requests`)
-           ratelimit_tokens_remaining <- as.integer(
-             .response_headers["x-ratelimit-remaining-tokens"]$`x-ratelimit-remaining-tokens`)
-           
-           # Assuming reset occurs every 60 seconds (at least I got minutes in my azure console)
-           reset_interval <- 60         
-           
-           ratelimit_requests_reset_time <- request_time + reset_interval
-           ratelimit_tokens_reset_time <- request_time + reset_interval
-           
-           list(
-             this_request_time = request_time,
-             ratelimit_requests = NA,
-             ratelimit_requests_remaining = ratelimit_requests_remaining,
-             ratelimit_requests_reset_time = ratelimit_requests_reset_time,
-             ratelimit_tokens = NA,
-             ratelimit_tokens_remaining = ratelimit_tokens_remaining,
-             ratelimit_tokens_reset_time = ratelimit_tokens_reset_time
-           )
-         },
-         stop(sprintf("Unsupported API type: %s", .api))
-  )
-}
-
 #' Get the current rate limit information for all or a specific API
 #'
 #' This function retrieves the rate limit details for the specified API,
@@ -164,7 +86,6 @@ ratelimit_from_header <- function(.response_headers, .api) {
 #' @param .api_name (Optional) The name of the API whose rate limit info you want to get
 #'                   If not provided, the rate limit info for all APIs in the environment will be returned
 #' @return A tibble containing the rate limit information.
-
 #' @export
 rate_limit_info <- function(.api_name = NULL) {
   # If no API name is provided, print for all APIs in .tidyllm_rate_limit_env
