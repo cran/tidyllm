@@ -162,10 +162,10 @@ tibble::tibble(
 #   name = "AddressSchema",
 #   street = "character",
 #   houseNumber = "numeric",
-#   postcode = "character",
+#   postcode = field_chr("A postal code for a city"),
 #   city = "character",
 #   region = "character",
-#   country = "factor(Germany,France)"
+#   country = field_fct("A European Country", .levels=("Germany","France"))
 # )
 # address <- llm_message("Imagine an address in JSON format that matches the schema.") |>
 #         chat(openai(),.json_schema = address_schema)

@@ -56,9 +56,9 @@ For more examples and advanced usage, check the [Get Started vignette](https://e
 
 Please note: To use **tidyllm**, you need either an installation of **ollama** or an active API key for one of the supported providers (e.g., Claude, ChatGPT). See the [Get Started vignette](https://edubruell.github.io/tidyllm/articles/tidyllm.html) for setup instructions.
 
-## Interface-change in 0.2.3.
+## Interface-change in last release
 
-The development version 0.2.3. of **tidyllm**,  introduces a major interface change to provide a more intuitive user experience. Previously, provider-specific functions like `claude()`, `openai()`, and others were directly used for chat-based workflows. They specified both an API-provider and performed a chat-interaction. Now, these functions primarily serve as provider configuration for more general verbs like `chat()`,`embed()` or `send_batch()`. A combination of a general verb and a provider will always route requests to a provider-specific function like `openai_chat()`. Read the [Changelog](https://edubruell.github.io/tidyllm/news/) or the [package vignette](https://edubruell.github.io/tidyllm/articles/tidyllm.html) for more information. 
+The last CRAN release of **tidyllm**,  introduces a major interface change to provide a more intuitive user experience. Previously, provider-specific functions like `claude()`, `openai()`, and others were directly used for chat-based workflows. They specified both an API-provider and performed a chat-interaction. Now, these functions primarily serve as provider configuration for more general verbs like `chat()`,`embed()` or `send_batch()`. A combination of a general verb and a provider will always route requests to a provider-specific function like `openai_chat()`. Read the [Changelog](https://edubruell.github.io/tidyllm/news/) or the [package vignette](https://edubruell.github.io/tidyllm/articles/tidyllm.html) for more information. 
 
 For backward compatibility, the old use of functions like `openai()` or `claude()` directly for chat requests still works but now but issues deprecation warnings. It is recommended to either use the verb-based interface:
 ```r
@@ -85,8 +85,8 @@ For detailed instructions and advanced features, see:
 ## Similar packages
 The are some similar R packages for working with LLMs:
 
-  - [elmer](https://elmer.tidyverse.org/) is espiacially great for asynchronous workflows, chatbots in Shiny and advanced tool-calling capabilities. Its schema functions offer robust support for complex structured data extraction, making it a great choice for applications that require highly interactive or structured LLM interactions. While **elmer**’s feature set overlaps with **tidyllm** in some areas, its interface and design philosophy are very different.
-  - [rollama](https://jbgruber.github.io/rollama/) is specifically designed to support the Ollama API, enabling seamless interaction with local LLM models. A key strength of **rollama** lies in its specialized Ollama API functionalities, such as `copy`, `create`, and `delete`, which are not currently available in **tidyllm**. These features make **rollama** particularly suited for workflows requiring model management or deployment within the Ollama ecosystem.
+  - [ellmer](https://ellmer.tidyverse.org/) is especially great for asynchronous workflows, chatbots in Shiny and advanced tool-calling capabilities. Its schema functions offer robust support for complex structured data extraction, making it a great choice for applications that require highly interactive or structured LLM interactions. While **ellmer**’s feature set overlaps with **tidyllm** in some areas, its interface and design philosophy are very different.
+  - [rollama](https://jbgruber.github.io/rollama/) is specifically designed to support the Ollama API, enabling seamless interaction with local LLM models. A key strength of **rollama** lies in its specialized Ollama API functionalities, such as `copy` and `create` which are not currently available in **tidyllm**. These features make **rollama** particularly suited for workflows requiring model management or deployment within the Ollama ecosystem.
   
 ## Contributing
 

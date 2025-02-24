@@ -8,6 +8,7 @@ send_openai_batch(
   .llms,
   .model = "gpt-4o",
   .max_completion_tokens = NULL,
+  .reasoning_effort = NULL,
   .frequency_penalty = NULL,
   .logit_bias = NULL,
   .presence_penalty = NULL,
@@ -15,6 +16,8 @@ send_openai_batch(
   .stop = NULL,
   .temperature = NULL,
   .top_p = NULL,
+  .logprobs = NULL,
+  .top_logprobs = NULL,
   .dry_run = FALSE,
   .overwrite = FALSE,
   .json_schema = NULL,
@@ -31,6 +34,8 @@ send_openai_batch(
 
 \item{.max_completion_tokens}{Integer specifying the maximum tokens per response (default: NULL).}
 
+\item{.reasoning_effort}{How long should reasoning models reason (can either be "low","medium" or "high")}
+
 \item{.frequency_penalty}{Number between -2.0 and 2.0. Positive values penalize new tokens based on their existing frequency in the text so far.}
 
 \item{.logit_bias}{A named list modifying the likelihood of specified tokens appearing in the completion.}
@@ -45,11 +50,15 @@ send_openai_batch(
 
 \item{.top_p}{An alternative to sampling with temperature, called nucleus sampling.}
 
+\item{.logprobs}{If TRUE, get the log probabilities of each output token (default: NULL).}
+
+\item{.top_logprobs}{If specified, get the top N log probabilities of each output token (0-5, default: NULL).}
+
 \item{.dry_run}{Logical; if TRUE, returns the prepared request object without executing it (default: FALSE).}
 
 \item{.overwrite}{Logical; if TRUE, allows overwriting an existing batch ID associated with the request (default: FALSE).}
 
-\item{.json_schema}{A JSON schema object as R list to enforce the output structure (default: NULL).}
+\item{.json_schema}{A JSON schema object provided by tidyllm_schema or ellmer schemata (default: NULL).}
 
 \item{.max_tries}{Maximum number of retries to perform the request (default: 3).}
 

@@ -40,6 +40,28 @@ validate_inputs <- function(.predicates) {
   })
 }
 
+#' Small helper function to recursively find whether a list contains a name
+#'
+#' @param .x A list to search within.
+#' @param .name A character string of the name to search for.
+#' @noRd
+r_has_name <- function(.x, .name) {
+  if (is.list(.x)) {
+    return(.name %in% names(.x) || any(sapply(.x, r_has_name, .name = .name)))
+  }
+  FALSE
+}
+
+#' Helper to determine if some object is an ellmer type
+#'
+#' @param .x An input
+#' @noRd
+is_ellmer_type <- function(.x) {
+  if (!requireNamespace("ellmer", quietly = TRUE)) return(FALSE)
+  inherits(.x, c("ellmer::TypeBasic", "ellmer::TypeEnum", 
+                "ellmer::TypeObject", "ellmer::TypeArray"))
+}
+
 # Helper function to filter mmessages by roles
 #'
 #' @param .message_hisotry A message history in the format used within LLMMessage

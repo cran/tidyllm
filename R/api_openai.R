@@ -90,7 +90,7 @@ method(extract_metadata, list(api_openai,class_list))<- function(api,response) {
     timestamp         = lubridate::as_datetime(response$created),
     prompt_tokens     = response$usage$prompt_tokens,
     completion_tokens = response$usage$completion_tokens,
-    total_tokens      = response$usage$completion_tokens,
+    total_tokens      = response$usage$total_tokens,
     specific_metadata = list(
       system_fingerprint        = response$system_fingerprint,
       completion_tokens_details = response$usage$completion_tokens_details,
@@ -98,6 +98,35 @@ method(extract_metadata, list(api_openai,class_list))<- function(api,response) {
       ) 
   )
 }  
+
+#' A function to get loprobs from Openai responses
+#'
+#' @noRd
+method(parse_logprobs, list(api_openai, class_list)) <- function(api, choices) {
+  # Helper to parse each token's logprobs
+  parse_token <- function(token_data) {
+    list(
+      token = token_data$token,
+      logprob = token_data$logprob,
+      bytes = if (!is.null(token_data$bytes)) unlist(token_data$bytes, use.names = FALSE) else NULL,
+      top_logprobs = purrr::map(token_data$top_logprobs, function(tlp) {
+        list(
+          token = tlp$token,
+          logprob = tlp$logprob,
+          bytes = if (!is.null(tlp$bytes)) unlist(tlp$bytes, use.names = FALSE) else NULL
+        )
+      })
+    )
+  }
+  
+  # Extract logprobs if available
+  if (!is.null(choices$logprobs)) {
+    return(purrr::map(choices$logprobs$content, parse_token))
+  }
+  
+  NULL  # Return NULL if no logprobs are found
+}
+
 
 
 #' A callback function generator for an OpenAI request 
@@ -167,17 +196,20 @@ method(generate_callback_function,api_openai) <- function(api) {
 #' @param .presence_penalty Number between -2.0 and 2.0. Positive values penalize new tokens based on whether they appear in the text so far.
 #' @param .seed If specified, the system will make a best effort to sample deterministically.
 #' @param .stop Up to 4 sequences where the API will stop generating further tokens.
+#' @param .reasoning_effort How long should reasoning models reason (can either be "low","medium" or "high")
 #' @param .stream If set to TRUE, the answer will be streamed to console as it comes (default: FALSE).
 #' @param .temperature What sampling temperature to use, between 0 and 2. Higher values make the output more random.
 #' @param .top_p An alternative to sampling with temperature, called nucleus sampling.
 #' @param .api_url Base URL for the API (default: "https://api.openai.com/").
 #' @param .timeout Request timeout in seconds (default: 60).
 #' @param .verbose Should additional information be shown after the API call (default: FALSE).
-#' @param .json_schema A JSON schema object as R list to enforce the output structure (If defined has precedence over JSON mode).
+#' @param .json_schema A JSON schema object provided by tidyllm schema or ellmer schemata.
 #' @param .max_tries Maximum retries to perform request
 #' @param .dry_run If TRUE, perform a dry run and return the request object (default: FALSE).
 #' @param .compatible If TRUE, skip API and rate-limit checks for OpenAI compatible APIs (default: FALSE).
 #' @param .api_path  The path relative to the base `.api_url` for the API (default: "/v1/chat/completions").
+#' @param .logprobs If TRUE, get the log probabilities of each output token (default: NULL).
+#' @param .top_logprobs If specified, get the top N log probabilities of each output token (0-5, default: NULL).
 #'
 #'
 #' @return A new `LLMMessage` object containing the original messages plus the assistant's response.
@@ -187,6 +219,7 @@ openai_chat <- function(
     .llm,
     .model = "gpt-4o",
     .max_completion_tokens = NULL,
+    .reasoning_effort = NULL,
     .frequency_penalty = NULL,
     .logit_bias = NULL,
     .presence_penalty = NULL,
@@ -202,13 +235,16 @@ openai_chat <- function(
     .max_tries = 3,
     .dry_run = FALSE,
     .compatible = FALSE,
-    .api_path = "/v1/chat/completions"
+    .api_path = "/v1/chat/completions",
+    .logprobs = NULL,       
+    .top_logprobs = NULL
 ) {
   # Validate inputs
   c(
     "Input .llm must be an LLMMessage object" = S7_inherits(.llm,LLMMessage),
     "Input .model must be a string" = is.character(.model),
-    "Input .max_completion_tokens must be NULL or a positive integer" = is.null(.max_completion_tokens) | (is_integer_valued(.max_completion_tokens) & .max_completion_tokens > 0),    
+    "Input .max_completion_tokens must be NULL or a positive integer" = is.null(.max_completion_tokens) | (is_integer_valued(.max_completion_tokens) & .max_completion_tokens > 0),   
+    "Input .reasoning_effort must be NULL or one of 'low', 'medium', 'high'" = is.null(.reasoning_effort) | (.reasoning_effort %in% c("low", "medium", "high")),
     "Input .frequency_penalty must be numeric or NULL" = is.null(.frequency_penalty) | is.numeric(.frequency_penalty),
     "Input .logit_bias must be a list or NULL" = is.null(.logit_bias) | is.list(.logit_bias),
     "Input .presence_penalty must be numeric or NULL" = is.null(.presence_penalty) | is.numeric(.presence_penalty),
@@ -220,11 +256,13 @@ openai_chat <- function(
     "Input .api_url must be a string" = is.character(.api_url),
     "Input .timeout must be integer-valued numeric" = is_integer_valued(.timeout),
     "Input .verbose must be logical" = is.logical(.verbose),
-    #"Input .json_schema must be NULL or a list" = is.null(.json_schema) | is.list(.json_schema) | S7_inherits(.json_schema,elmer:::TypeObject),
+    "Input .json_schema must be NULL or a list or an ellmer type object" = is.null(.json_schema) | is.list(.json_schema) | is_ellmer_type(.json_schema),
     "Input .max_tries must be integer-valued numeric" = is_integer_valued(.max_tries),
     "Input .dry_run must be logical" = is.logical(.dry_run),
     "Input .compatible must be logical" = is.logical(.compatible),
-    "Input .api_path must be a string" = is.character(.api_path)
+    "Input .api_path must be a string" = is.character(.api_path),
+    "Input .logprobs must be NULL or a logical" = is.null(.logprobs) | is.logical(.logprobs),
+    "Input .top_logprobs must be NULL or an integer between 0 and 5" = is.null(.top_logprobs) | (is_integer_valued(.top_logprobs) && .top_logprobs >= 0 && .top_logprobs <= 5)
   ) |> validate_inputs()
   
   
@@ -247,27 +285,25 @@ openai_chat <- function(
     api_key <- get_api_key(api_obj,.dry_run)
   }
   
-  #Uncommented until elmer exports TypeObject and the like
-  #if (requireNamespace("elmer", quietly = TRUE)) {
-  #  #Handle elmer json schemata Objects
-  #  if(S7_inherits(.json_schema,elmer:::TypeObject)){
-  #    .json_schema <- list(
-  #      name = "Elmer_Schema",  # Schema name
-  #      schema = to_schema(.json_schema)
-  #    )
-  #  }
-  #}
-  
   # Handle JSON schema and JSON mode
   response_format <- NULL
   json = FALSE
   if (!is.null(.json_schema)) {
     json=TRUE
-    response_format <- list(
-      type = "json_schema",
-      json_schema = list(name = attr(.json_schema,"name"),
-                         schema = .json_schema)
-    )
+    schema_name = "empty"
+    if (requireNamespace("ellmer", quietly = TRUE)) {
+      #Handle ellmer json schemata Objects
+      if(S7_inherits(.json_schema,ellmer::TypeObject)){
+          .json_schema = to_schema(.json_schema)
+          schema_name = "ellmer_schema"
+      } 
+    }
+    if(schema_name!="ellmer_schema"){schema_name <- attr(.json_schema,"name")}
+      response_format <- list(
+        type = "json_schema",
+        json_schema = list(name = schema_name,
+                           schema = .json_schema)
+      )
   } 
   
   # Build the request body
@@ -277,13 +313,16 @@ openai_chat <- function(
     frequency_penalty = .frequency_penalty,
     logit_bias = .logit_bias,
     max_completion_tokens = .max_completion_tokens,
+    reasoning_effort = .reasoning_effort,
     presence_penalty = .presence_penalty,
     response_format = response_format,
     seed = .seed,
     stop = .stop,
     stream = .stream,
     temperature = .temperature,
-    top_p = .top_p
+    top_p = .top_p,
+    logprobs = .logprobs,        
+    top_logprobs = .top_logprobs
   ) |> purrr::compact()
   
   
@@ -310,13 +349,20 @@ openai_chat <- function(
   
   # Extract assistant reply and rate limiting info from response headers
   assistant_reply <- response$assistant_reply
+  
+  #Check whether the result has logprobs in it 
+  logprobs  <- parse_logprobs(api_obj, response$raw$content$choices[[1]])
+  
+  
+  #Track the rate limit if we are not using a non-openai api
   if (!.compatible) {track_rate_limit(api_obj,response$headers,.verbose)}
   
   add_message(llm     = .llm,
               role    = "assistant", 
               content = assistant_reply , 
               json    = json,
-              meta    = response$meta)
+              meta    = response$meta,
+              logprobs = logprobs)
 }
 
 
@@ -408,6 +454,7 @@ openai_embedding <- function(.input,
 #' @param .llms A list of LLMMessage objects containing conversation histories.
 #' @param .model Character string specifying the OpenAI model version (default: "gpt-4o").
 #' @param .max_completion_tokens Integer specifying the maximum tokens per response (default: NULL).
+#' @param .reasoning_effort How long should reasoning models reason (can either be "low","medium" or "high")
 #' @param .frequency_penalty Number between -2.0 and 2.0. Positive values penalize new tokens based on their existing frequency in the text so far.
 #' @param .logit_bias A named list modifying the likelihood of specified tokens appearing in the completion.
 #' @param .presence_penalty Number between -2.0 and 2.0. Positive values penalize new tokens based on whether they appear in the text so far.
@@ -415,13 +462,14 @@ openai_embedding <- function(.input,
 #' @param .stop Up to 4 sequences where the API will stop generating further tokens.
 #' @param .temperature What sampling temperature to use, between 0 and 2. Higher values make the output more random.
 #' @param .top_p An alternative to sampling with temperature, called nucleus sampling.
+#' @param .logprobs If TRUE, get the log probabilities of each output token (default: NULL).
+#' @param .top_logprobs If specified, get the top N log probabilities of each output token (0-5, default: NULL).
 #' @param .dry_run Logical; if TRUE, returns the prepared request object without executing it (default: FALSE).
 #' @param .overwrite Logical; if TRUE, allows overwriting an existing batch ID associated with the request (default: FALSE).
 #' @param .max_tries Maximum number of retries to perform the request (default: 3).
 #' @param .timeout Integer specifying the request timeout in seconds (default: 60).
-#' @param .json_schema A JSON schema  as R list to enforce the output structure (default: NULL).
 #' @param .verbose Logical; if TRUE, additional info about the requests is printed (default: FALSE).
-#' @param .json_schema A JSON schema object as R list to enforce the output structure (default: NULL).
+#' @param .json_schema A JSON schema object provided by tidyllm_schema or ellmer schemata (default: NULL).
 #' @param .id_prefix Character string to specify a prefix for generating custom IDs when names in `.llms` are missing (default: "tidyllm_openai_req_").
 #' 
 #' @return An updated and named list of `.llms` with identifiers that align with batch responses, including a `batch_id` attribute.
@@ -429,6 +477,7 @@ openai_embedding <- function(.input,
 send_openai_batch <- function(.llms,
                               .model = "gpt-4o",
                               .max_completion_tokens = NULL,
+                              .reasoning_effort = NULL,
                               .frequency_penalty = NULL,
                               .logit_bias = NULL,
                               .presence_penalty = NULL,
@@ -436,6 +485,8 @@ send_openai_batch <- function(.llms,
                               .stop = NULL,
                               .temperature = NULL,
                               .top_p = NULL,
+                              .logprobs = NULL,       
+                              .top_logprobs = NULL,
                               .dry_run = FALSE,
                               .overwrite = FALSE,
                               .json_schema = NULL,
@@ -448,6 +499,7 @@ send_openai_batch <- function(.llms,
   c(
     ".llms must be a list of LLMMessage objects" = is.list(.llms) && all(sapply(.llms, S7_inherits, LLMMessage)),
     ".max_completion_tokens must be NULL or a positive integer" = is.null(.max_completion_tokens) | (is_integer_valued(.max_completion_tokens) & .max_completion_tokens > 0),
+    ".reasoning_effort must be NULL or one of 'low', 'medium', 'high'" = is.null(.reasoning_effort) | (.reasoning_effort %in% c("low", "medium", "high")),
     ".frequency_penalty must be numeric or NULL" = is.null(.frequency_penalty) | is.numeric(.frequency_penalty),
     ".logit_bias must be a list or NULL" = is.null(.logit_bias) | is.list(.logit_bias),
     ".presence_penalty must be numeric or NULL" = is.null(.presence_penalty) | is.numeric(.presence_penalty),
@@ -455,6 +507,9 @@ send_openai_batch <- function(.llms,
     ".stop must be NULL or a character vector or string" = is.null(.stop) | is.character(.stop),
     ".temperature must be numeric or NULL" = is.null(.temperature) | is.numeric(.temperature),
     ".top_p must be numeric or NULL" = is.null(.top_p) | is.numeric(.top_p),
+    ".logprobs must be NULL or a logical" = is.null(.logprobs) | is.logical(.logprobs),
+    ".json_schema must be NULL or a list or an ellmer type object" = is.null(.json_schema) | is.list(.json_schema) | is_ellmer_type(.json_schema),
+    ".top_logprobs must be NULL or an integer between 0 and 5" = is.null(.top_logprobs) | (is_integer_valued(.top_logprobs) && .top_logprobs >= 0 && .top_logprobs <= 5),
     ".dry_run must be logical" = is.logical(.dry_run),
     ".verbose must be logical" = is.logical(.verbose),
     ".overwrite must be logical" = is.logical(.overwrite),
@@ -479,12 +534,21 @@ send_openai_batch <- function(.llms,
   
   # Handle JSON schema and JSON mode
   response_format <- NULL
-  json <- FALSE
+  json = FALSE
   if (!is.null(.json_schema)) {
     json=TRUE
+    schema_name = "empty"
+    if (requireNamespace("ellmer", quietly = TRUE)) {
+      #Handle ellmer json schemata Objects
+      if(S7_inherits(.json_schema,ellmer::TypeObject)){
+        .json_schema = to_schema(.json_schema)
+        schema_name = "ellmer_schema"
+      } 
+    }
+    if(schema_name!="ellmer_schema"){schema_name <- attr(.json_schema,"name")}
     response_format <- list(
       type = "json_schema",
-      json_schema = list(name = attr(.json_schema,"name"),
+      json_schema = list(name = schema_name,
                          schema = .json_schema)
     )
   } 
@@ -510,12 +574,15 @@ send_openai_batch <- function(.llms,
       frequency_penalty = .frequency_penalty,
       logit_bias = .logit_bias,
       max_completion_tokens = .max_completion_tokens,
+      reasoning_effort = .reasoning_effort,
       presence_penalty = .presence_penalty,
       response_format = response_format,
       seed = .seed,
       stop = .stop,
       temperature = .temperature,
-      top_p = .top_p
+      top_p = .top_p,
+      logprobs = .logprobs,        
+      top_logprobs = .top_logprobs
     ) |> purrr::compact()
     
    
@@ -860,11 +927,14 @@ fetch_openai_batch <- function(.llms,
     if (!is.null(result) && is.null(result$error) && result$response$status_code == 200) {
       assistant_reply <- result$response$body$choices$message$content
       meta_data <- extract_metadata(api_obj,result$response$body)
+      logprobs        <- parse_logprobs(api_obj, as.list(result$response$body$choices))
+      
       llm <- add_message(llm = .llms[[custom_id]],
                               role = "assistant", 
                               content =  assistant_reply,
                               json = .json,
-                              meta = meta_data)
+                              meta = meta_data, 
+                              logprobs = logprobs)
       return(llm)
     } else {
       warning(sprintf("Result for custom_id %s was unsuccessful or not found", custom_id))
@@ -958,6 +1028,76 @@ cancel_openai_batch <- function(.batch_id,
 }
 
 
+#' List Available Models from the OpenAI API
+#'
+#' @param .api_url Base URL for the API (default: "https://api.openai.com").
+#' @param .timeout Request timeout in seconds (default: 60).
+#' @param .max_tries Maximum number of retries for the API request (default: 3).
+#' @param .dry_run Logical; if TRUE, returns the prepared request object without executing it.
+#' @param .verbose Logical; if TRUE, prints additional information about the request.
+#'
+#' @return A tibble containing model information (columns include `id`, `created`, and `owned_by`),
+#'   or NULL if no models are found.
+#'
+#' @export
+openai_list_models <- function(.api_url = "https://api.openai.com",
+                               .timeout = 60,
+                               .max_tries = 3,
+                               .dry_run = FALSE,
+                               .verbose = FALSE) {
+  # Create an API object for OpenAI using the tidyllm helper
+  api_obj <- api_openai(short_name = "openai",
+                        long_name  = "OpenAI",
+                        api_key_env_var = "OPENAI_API_KEY")
+  
+  # Retrieve the API key (will error if not set, unless in dry run mode)
+  api_key <- get_api_key(api_obj, .dry_run)
+  
+  # Build the request to the /v1/models endpoint
+  request <- httr2::request(.api_url) |>
+    httr2::req_url_path("/v1/models") |>
+    httr2::req_headers(
+      Authorization = sprintf("Bearer %s", api_key),
+      `Content-Type` = "application/json"
+    )
+  
+  # If dry run is requested, return the constructed request object
+  if (.dry_run) {
+    return(request)
+  }
+  
+  # Perform the request with specified timeout and retry logic
+  response <- request |>
+    httr2::req_timeout(.timeout) |>
+    httr2::req_retry(max_tries = .max_tries) |>
+    httr2::req_perform() |>
+    httr2::resp_body_json()
+  
+  if (.verbose) {
+    message("Retrieved response from OpenAI: ", response$object)
+  }
+  
+  # Check if the "data" field exists and contains models
+  if (!is.null(response$data)) {
+    models <- response$data
+    
+    # Create a tibble with selected model information
+    model_info <- tibble::tibble(
+      id = vapply(models, function(model) model$id, character(1)),
+      created = vapply(models, function(model) {
+        as.character(strptime(
+          format(as.POSIXct(model$created, origin = "1970-01-01", tz = "GMT"),
+                 format = "%a, %d %b %Y %H:%M:%S"),
+          format = "%a, %d %b %Y %H:%M:%S", tz = "GMT"))
+      }, character(1)),
+      owned_by = vapply(models, function(model) model$owned_by, character(1))
+    )
+    
+    return(model_info)
+  } else {
+    return(NULL)
+  }
+}
 
 
 #' OpenAI Provider Function
@@ -984,7 +1124,8 @@ openai <- create_provider_function(
   send_batch = send_openai_batch,
   check_batch = check_openai_batch,
   list_batches = list_openai_batches,
-  fetch_batch = fetch_openai_batch
+  fetch_batch = fetch_openai_batch,
+  list_models = openai_list_models
 )
 
 #' Alias for the OpenAI Provider Function
