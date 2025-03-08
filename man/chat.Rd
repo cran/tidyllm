@@ -16,6 +16,7 @@ chat(
   .model = NULL,
   .verbose = NULL,
   .json_schema = NULL,
+  .tools = NULL,
   .seed = NULL,
   .stop = NULL,
   .frequency_penalty = NULL,
@@ -46,6 +47,8 @@ You can also set a default provider function via the \code{tidyllm_chat_default}
 \item{.verbose}{Logical; if \code{TRUE}, prints additional information about the request and response.}
 
 \item{.json_schema}{List; A JSON schema object as R list to enforce the output structure}
+
+\item{.tools}{Either a single TOOL object or a list of TOOL objects representing the available functions for tool calls.}
 
 \item{.seed}{Integer; sets a random seed for reproducibility.}
 

@@ -1,5 +1,76 @@
+# Latest Changes
 
-# Version 0.3.1 (submited to CRAN)
+# Version 0.3.2
+
+## Tool usage introduced to tidyllm
+
+A first  tool usage system inspired by a similar system in `ellmer` has been introduced to tidyllm. At the moment tool use is available 
+for `claude()`, `openai()`, `mistral()`, `ollama()`, `gemini()` and `groq()`: 
+```r
+get_current_time <- function(tz, format = "%Y-%m-%d %H:%M:%S") {
+  format(Sys.time(), tz = tz, format = format, usetz = TRUE)
+}
+
+time_tool <- tidyllm_tool(
+  .f = get_current_time,
+  .description = "Returns the current time in a specified timezone. Use this to determine the current time in any location.",
+  tz = field_chr("The time zone identifier (e.g., 'Europe/Berlin', 'America/New_York', 'Asia/Tokyo', 'UTC'). Required."),
+  format = field_chr("Format string for the time output. Default is '%Y-%m-%d %H:%M:%S'.")
+)
+
+
+llm_message("What's the exact time in Stuttgart?") |>
+  chat(openai,.tools=time_tool)
+  
+#> Message History:
+#> system:
+#> You are a helpful assistant
+#> --------------------------------------------------------------
+#> user:
+#> What's the exact time in Stuttgart?
+#> --------------------------------------------------------------
+#> assistant:
+#> The current time in Stuttgart (Europe/Berlin timezone) is
+#> 2025-03-03 09:51:22 CET.
+#> --------------------------------------------------------------  
+```  
+You can use the `tidyllm_tool()` function to run to make functions available to a large language model. 
+The model can then run these functions in your current session, if they are needed for a chat request. 
+
+## Support for DeepSeek added
+
+tidyllm now supports the deepseek API as provider via `deepseek_chat()` or the `deepseek()` provider function. 
+Deepseek supports logprobs just like `openai()`, which you can get via `get_logprobs()`. 
+At the moment tool usage for deepseek is very inconsistent.
+
+## Support for Voyage.ai and Multimodal Embeddings Added
+
+Voyage.ai introduces a **unique multimodal embeddings feature**, allowing you to generate embeddings not only for text but also for images. 
+The new `voyage_embedding()` function in **tidyllm** enables this functionality by seamlessly handling different input types, 
+working with both the new feature as well as the same inputs as for other embedding functions. 
+
+The new `img()` function lets you create image objects for embedding. You can mix text and `img()` objects in a list and send them to Voyage AI for multimodal embeddings:
+
+```r
+list("tidyllm", img(here::here("docs", "logo.png"))) |>
+  embed(voyage)
+#> # A tibble: 2 × 2
+#>   input          embeddings   
+#>   <chr>          <list>       
+#> 1 tidyllm        <dbl [1,024]>
+#> 2 [IMG] logo.png <dbl [1,024]>
+```
+
+In this example, both text (`"tidyllm"`) and an image (`logo.png`) are embedded together. The function returns a tibble where the `input` column contains the text and labeled image names, and the `embeddings` column contains the corresponding embedding vectors.
+
+## New Tests and Bugfixes
+
+- Several Bugfixes in `tidyllm_schema()` and `tidyllm_tool()`
+- New Tests for less covered APIs. 
+
+# Version 0.3.1 
+
+ ⚠️ There is a bad bug in the latest CRAN release in the `fetch_openai_batch()` function that is now fixed in the latest Github version. For the CRAN version the `fetch_openai_batch()` function throws errors if the logprobs are turned off.
 
 ## Changes compared to last release
 

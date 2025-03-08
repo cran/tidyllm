@@ -82,6 +82,7 @@ create_provider_function <- function(.name, ...) {
 #' @param .model Character; the model identifier to use (e.g., `"gpt-4"`).
 #' @param .verbose Logical; if `TRUE`, prints additional information about the request and response.
 #' @param .json_schema List; A JSON schema object as R list to enforce the output structure 
+#' @param .tools Either a single TOOL object or a list of TOOL objects representing the available functions for tool calls.
 #' @param .seed Integer; sets a random seed for reproducibility.
 #' @param .stop Character vector; specifies sequences where the model should stop generating further tokens.
 #' @param .frequency_penalty Numeric; adjusts the likelihood of repeating tokens (positive values decrease repetition).
@@ -123,6 +124,7 @@ chat <- function(
     .model = NULL,
     .verbose = NULL,
     .json_schema = NULL,
+    .tools = NULL,
     .seed = NULL,
     .stop = NULL,
     .frequency_penalty = NULL,
@@ -169,8 +171,10 @@ chat <- function(
     .seed = .seed,
     .stop = .stop,
     .frequency_penalty = .frequency_penalty,
-    .presence_penalty = .presence_penalty
+    .presence_penalty = .presence_penalty,
+    .tools = .tools
   )
+  
   common_args <- common_args[!sapply(common_args, is.null)]
   
   # Warn about unsupported arguments
@@ -195,7 +199,7 @@ chat <- function(
 #' The `embed()` function allows you to embed a text via a specified provider.
 #' It routes the input to the appropriate provider-specific embedding function.
 #'
-#' @param .input  A character vector of texts to embed or an `LLMMessage` object
+#' @param .input  A character vector of texts v, a list of texts and image objects,  or an `LLMMessage` object
 #' @param .provider A function or function call specifying the language model provider and any additional parameters.
 #'   This should be a call to a provider function like `openai()`, `ollama()`, etc. 
 #'   You can also set a default provider function via the `tidyllm_embed_default` option.
@@ -225,7 +229,7 @@ embed <- function(.input,
 
   # Validate the inputs
   c(
-    "Input .input must be a character vector or an LLMMessage object" = S7_inherits(.input, LLMMessage) | is.character(.input),
+    "Input .input must be a character vector, a list or an LLMMessage object" = S7_inherits(.input, LLMMessage) | is.character(.input) | is.list(.input),
     "You need to specify a .provider function in embed()" = !is.null(.provider)
   ) |> validate_inputs()
   

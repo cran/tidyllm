@@ -23,6 +23,9 @@
 # Sys.setenv(PERPLEXITY_API_KEY = "YOUR-PERPLEXITY-API-KEY")
 
 ## ----eval= FALSE, echo=TRUE---------------------------------------------------
+# Sys.setenv(DEEPSEEK_API_KEY = "YOUR-DEEPSEEK-KEY")
+
+## ----eval= FALSE, echo=TRUE---------------------------------------------------
 # ANTHROPIC_API_KEY="YOUR-ANTHROPIC-API-KEY"
 
 ## ----convo1,  eval=FALSE, echo=TRUE-------------------------------------------
@@ -165,7 +168,7 @@ tibble::tibble(
 #   postcode = field_chr("A postal code for a city"),
 #   city = "character",
 #   region = "character",
-#   country = field_fct("A European Country", .levels=("Germany","France"))
+#   country = field_fct("A European Country", .levels=c("Germany","France"))
 # )
 # address <- llm_message("Imagine an address in JSON format that matches the schema.") |>
 #         chat(openai(),.json_schema = address_schema)
