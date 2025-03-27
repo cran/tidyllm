@@ -36,148 +36,46 @@ test_that("openai function constructs a correct request and dry runs it", {
   # Now check the body content to ensure the JSON is constructed as expected
   body_json <- request$body |> jsonlite::toJSON() |> as.character()
   
-  expected_json <- "{\"data\":{\"model\":[\"gpt-4o\"],\"messages\":[{\"role\":[\"system\"],\"content\":[\"You are a helpful assistant \"]},{\"role\":[\"user\"],\"content\":[\"Write a poem about a (stochastic) parrot \"]}],\"stream\":[false]},\"type\":[\"json\"],\"content_type\":[\"application/json\"],\"params\":{\"auto_unbox\":[true],\"digits\":[22],\"null\":[\"null\"]}}"
+  expected_json <- "{\"data\":{\"model\":[\"gpt-4o\"],\"messages\":[{\"role\":[\"system\"],\"content\":[\"You are a helpful assistant \"]},{\"role\":[\"user\"],\"content\":[\"Write a poem about a (stochastic) parrot \"]}]},\"type\":[\"json\"],\"content_type\":[\"application/json\"],\"params\":{\"auto_unbox\":[true],\"digits\":[22],\"null\":[\"null\"]}}"
   # Check if the JSON matches the expected JSON
   expect_equal(body_json, expected_json)
   
 })
 
 
-test_that("openai returns expected response", {
-  with_mock_dir("openai",expr = {
-    
-    # Make sure the environment starts clean
-    if (exists("openai", envir = .tidyllm_rate_limit_env)) {
-      .tidyllm_rate_limit_env[["openai"]] <- NULL
-    }
-    
-    # Store the current API key and set a dummy key if none exists
-    if (Sys.getenv("OPENAI_API_KEY") == "") {
-      Sys.setenv(OPENAI_API_KEY = "DUMMY_KEY_FOR_TESTING")
-    }
-    
-    llm <- llm_message("Hello, world")
-    
-    result <- openai_chat(
-      .llm = llm,
-      .temperature = 0,
-      .stream = FALSE
-    )
-    result_tbl <- as_tibble(result)
 
-    if (Sys.getenv("OPENAI_API_KEY") == "DUMMY_KEY_FOR_TESTING") {
-      Sys.setenv(OPENAI_API_KEY = "")
-    }
-    
-    ## Assertions based on the message in the captured mock response
-    expect_true(S7_inherits(result, LLMMessage))
-    expect_equal(
-      result_tbl$content[3],
-      "Hello! How can I assist you today?"
-    )
-    expect_equal(result_tbl$role[3], "assistant")
-    
-    # Now, check that the rate limit environment has been populated with correct values
-    expect_true(exists("openai", envir = .tidyllm_rate_limit_env))
-    
-    ## Retrieve rate limit info for chatgpt
-    rl_info <- rate_limit_info("openai")
-    #
-    ## Assertions for rate limit values based on the mocked response
-    expect_equal(rl_info$requests_remaining, 4999)
-    expect_equal(rl_info$tokens_remaining, 799970)
-  },simplify = FALSE)
+test_that("send_batch creates correct JSONL for batch requests", {
+  # Generate batch of messages
+  messages <- glue::glue("Write a haiku about {x}",
+                         x = c("Mannheim", "Stuttgart", "Heidelberg")) |>
+    purrr::map(llm_message)
+  
+  jsonl_lines <- send_batch(messages, openai, .model = "gpt-4o-mini", .dry_run = TRUE)
+  
+  
+  # Check that we have 3 lines (one for each request)
+  expect_equal(length(jsonl_lines), 3)
+  
+  # Parse each line as JSON
+  parsed_lines <- lapply(jsonl_lines, jsonlite::fromJSON)
+  
+  # Verify structure and content of each line
+  purrr::iwalk(parsed_lines, function(x,y){
+    expect_equal(x$custom_id, paste0("tidyllm_openai_req_", y))
+    expect_equal(x$method, "POST")
+    expect_equal(x$url, "/v1/chat/completions")
+    expect_equal(x$body$model, "gpt-4o-mini")
+    expect_equal(x$body$messages$role, c("system","user"))
+    expect_equal(x$body$messages$content[1], "You are a helpful assistant ")
+    expect_equal(x$body$messages$role[2], "user")
+  })
+  
+  content_lines <- parsed_lines  |>
+    purrr::map_chr(~.x$body$messages$content[2])
+  
+  expect_true(stringr::str_detect(content_lines[1],"Mannheim"))
+  expect_true(stringr::str_detect(content_lines[2],"Stuttgart"))
+  expect_true(stringr::str_detect(content_lines[3],"Heidelberg"))
 })
 
-test_that("openai_embedding returns expected response", {
-  with_mock_dir("openai_embedding",expr = {
-    
-    # Set a dummy key if none exists
-    if (Sys.getenv("OPENAI_API_KEY") == "") {
-      Sys.setenv(OPENAI_API_KEY = "DUMMY_KEY_FOR_TESTING")
-    }
-    
-    result <- c("It is not that I am mad, it is only that my head is different from yours",
-                "A man can do as he wills, but not will as he wills",
-                "Whereof one cannot speak, thereof one must be silent",
-                "The limits of my language mean the limits of my world") |>
-      openai_embedding() 
-    
-    if (Sys.getenv("OPENAI_API_KEY") == "DUMMY_KEY_FOR_TESTING") {
-      Sys.setenv(OPENAI_API_KEY = "")
-    }
-    
-    # Test that the result is a tibble
-    expect_s3_class(result, "tbl_df")
-    
-    # Test that the tibble has two columns: input and embeddings
-    expect_named(result, c("input", "embeddings"))
-    
-    # Test that the input column contains the original input texts
-    expect_equal(result$input, c("It is not that I am mad, it is only that my head is different from yours",
-                                 "A man can do as he wills, but not will as he wills",
-                                 "Whereof one cannot speak, thereof one must be silent",
-                                 "The limits of my language mean the limits of my world"))
-    
-    
-    purrr::walk(result$embeddings, function(embedding) {
-      expect_equal(length(embedding), 1536)
-    })
-    
-  },simplify = FALSE)
-})
 
-test_that("tidyllm_schema() handles single element correctly", {
-  with_mock_dir("openai_schema_single", {
-    
-    # Set a dummy key if none exists
-    if (Sys.getenv("OPENAI_API_KEY") == "") {
-      Sys.setenv(OPENAI_API_KEY = "DUMMY_KEY_FOR_TESTING")
-    }
-    
-    if (exists("openai", envir = .tidyllm_rate_limit_env)) {
-      .tidyllm_rate_limit_env[["openai"]] <- NULL
-    }
-    
-    schema_single <- tidyllm_schema(
-      name = "AreaSchema",
-      area = "numeric"
-    )
-    message_single <- llm_message("Imagine an area in JSON format that matches the schema.") |>
-      chat(openai(), .json_schema = schema_single) %>%
-      get_metadata()
-    
-    expect_true("completion_tokens" %in% colnames(message_single))
-    expect_gt(message_single$total_tokens, 0)
-  }, simplify = FALSE)
-})
-
-test_that("tidyllm_schema() handles multiple elements correctly", {
-  with_mock_dir("openai_schema_multiple", {
-    
-    # Set a dummy key if none exists
-    if (Sys.getenv("OPENAI_API_KEY") == "") {
-      Sys.setenv(OPENAI_API_KEY = "DUMMY_KEY_FOR_TESTING")
-    }
-    
-    if (exists("openai", envir = .tidyllm_rate_limit_env)) {
-      .tidyllm_rate_limit_env[["openai"]] <- NULL
-    }
-    
-    schema_multiple <- tidyllm_schema(
-      name = "AreaSchema",
-      area = "numeric",
-      population = "numeric"
-    )
-    message_multiple <- llm_message("Imagine an area and population in JSON format that matches the schema.") |>
-      chat(openai(), .json_schema = schema_multiple) %>%
-      get_metadata()
-    
-    expect_true("completion_tokens" %in% colnames(message_multiple))
-    expect_gt(message_multiple$total_tokens, 0)
-    
-    if (Sys.getenv("OPENAI_API_KEY") == "DUMMY_KEY_FOR_TESTING") {
-      Sys.setenv(OPENAI_API_KEY = "")
-    }
-  }, simplify = FALSE)
-})

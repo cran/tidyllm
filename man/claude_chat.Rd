@@ -6,20 +6,23 @@
 \usage{
 claude_chat(
   .llm,
-  .model = "claude-3-5-sonnet-20241022",
-  .max_tokens = 1024,
+  .model = "claude-3-7-sonnet-20250219",
+  .max_tokens = 2048,
   .temperature = NULL,
   .top_k = NULL,
   .top_p = NULL,
   .metadata = NULL,
   .stop_sequences = NULL,
   .tools = NULL,
+  .json_schema = NULL,
   .api_url = "https://api.anthropic.com/",
   .verbose = FALSE,
   .max_tries = 3,
   .timeout = 60,
   .stream = FALSE,
-  .dry_run = FALSE
+  .dry_run = FALSE,
+  .thinking = FALSE,
+  .thinking_budget = 1024
 )
 }
 \arguments{
@@ -41,6 +44,8 @@ claude_chat(
 
 \item{.tools}{List of additional tools or functions the model can use.}
 
+\item{.json_schema}{A schema to enforce an output structure}
+
 \item{.api_url}{Base URL for the Anthropic API (default: "https://api.anthropic.com/").}
 
 \item{.verbose}{Logical; if TRUE, displays additional information about the API call (default: FALSE).}
@@ -52,6 +57,10 @@ claude_chat(
 \item{.stream}{Logical; if TRUE, streams the response piece by piece (default: FALSE).}
 
 \item{.dry_run}{Logical; if TRUE, returns the prepared request object without executing it (default: FALSE).}
+
+\item{.thinking}{Logical; if TRUE, enables Claude's thinking mode for complex reasoning tasks (default: FALSE).}
+
+\item{.thinking_budget}{Integer specifying the maximum tokens Claude can spend on thinking (default: 1024). Must be at least 1024.}
 }
 \value{
 A new LLMMessage object containing the original messages plus Claude's response.

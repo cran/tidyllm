@@ -10,23 +10,14 @@
 # # Install TidyLLM from GitHub
 # devtools::install_github("edubruell/tidyllm")
 
-## ----eval= FALSE, echo=TRUE---------------------------------------------------
-# Sys.setenv(ANTHROPIC_API_KEY = "YOUR-ANTHROPIC-API-KEY")
-
-## ----eval= FALSE, echo=TRUE---------------------------------------------------
+## ----eval=FALSE---------------------------------------------------------------
 # Sys.setenv(OPENAI_API_KEY = "YOUR-OPENAI-API-KEY")
 
-## ----eval= FALSE, echo=TRUE---------------------------------------------------
-# Sys.setenv(GROQ_API_KEY = "YOUR-GROQ-API-KEY")
-
-## ----eval= FALSE, echo=TRUE---------------------------------------------------
-# Sys.setenv(PERPLEXITY_API_KEY = "YOUR-PERPLEXITY-API-KEY")
-
-## ----eval= FALSE, echo=TRUE---------------------------------------------------
-# Sys.setenv(DEEPSEEK_API_KEY = "YOUR-DEEPSEEK-KEY")
-
-## ----eval= FALSE, echo=TRUE---------------------------------------------------
+## ----eval=FALSE---------------------------------------------------------------
 # ANTHROPIC_API_KEY="YOUR-ANTHROPIC-API-KEY"
+
+## ----eval=FALSE---------------------------------------------------------------
+# ollama_download_model("deepscaler")
 
 ## ----convo1,  eval=FALSE, echo=TRUE-------------------------------------------
 # library(tidyllm)
@@ -161,27 +152,54 @@ tibble::tibble(
   print(width=60)
 
 ## ----schema,  eval=FALSE, echo=TRUE-------------------------------------------
-# address_schema <- tidyllm_schema(
-#   name = "AddressSchema",
-#   street = "character",
-#   houseNumber = "numeric",
-#   postcode = field_chr("A postal code for a city"),
-#   city = "character",
-#   region = "character",
-#   country = field_fct("A European Country", .levels=c("Germany","France"))
+# person_schema <- tidyllm_schema(
+#   first_name = field_chr("A male first name"),
+#   last_name = field_chr("A common last name"),
+#   occupation = field_chr("A quirky occupation"),
+#   address = field_object(
+#     "The persons home address",
+#     street = field_chr("A common street name in the city"),
+#     number = field_dbl("A house number"),
+#     city = field_chr("A large city"),
+#     zip = field_dbl("A zip code for the address"),
+#     country = field_fct("Either Germany or France",.levels = c("Germany","France"))
+#   )
 # )
-# address <- llm_message("Imagine an address in JSON format that matches the schema.") |>
-#         chat(openai(),.json_schema = address_schema)
-# address
+# 
+# profile <- llm_message("Imagine an person profile that matches the schema.") |>
+#   chat(openai(),.json_schema = person_schema)
+# 
+# profile
 
 ## ----schema_out,  eval=TRUE, echo=FALSE---------------------------------------
-address <- llm_message("Imagine an address in JSON format that matches the schema.") |>
- llm_message('{"street":"Hauptstraße","houseNumber":123,"postcode":"10115","city":"Berlin","region":"Berlin","country":"Germany"}',.role="assistant")
-address@message_history[[3]]$json <- TRUE
-address
+profile <- llm_message("Imagine an person profile that matches the schema.") |>
+ llm_message("{\"first_name\":\"Julien\",\"last_name\":\"Martin\",\"occupation\":\"Gondola Repair Specialist\",\"address\":{\"street\":\"Rue de Rivoli\",\"number\":112,\"city\":\"Paris\",\"zip\":75001,\"country\":\"France\"}}",.role="assistant")
+profile@message_history[[3]]$json <- TRUE
+profile
 
 ## ----get_reply_data-----------------------------------------------------------
-address |> get_reply_data() |> str()
+profile |> get_reply_data() |> str()
+
+## ----fobj, eval=FALSE, echo=TRUE----------------------------------------------
+# llm_message("Imagine five people") |>
+#   chat(openai,.json_schema =
+#          tidyllm_schema(
+#             person = field_object(
+#               first_name = field_chr(),
+#               last_name = field_chr(),
+#               occupation = field_chr(),
+#               .vector = TRUE
+#               )
+#          )
+#        ) |>
+#   get_reply_data() |>
+#   bind_rows()
+
+## ----fobjout, echo=FALSE, eval=TRUE-------------------------------------------
+data.frame(first_name = c("Alice","Robert","Maria","Liam","Sophia"),
+           last_name = c("Johnson","Anderson","Gonzalez","O'Connor","Lee"),
+           occupation = c("Software Developer","Graphic Designer","Data Scientist","Mechanical Engineer","Content Writer")
+           )
 
 ## ----temperature,  eval=FALSE, echo=TRUE--------------------------------------
 #   temp_example <- llm_message("Explain how temperature parameters work
@@ -223,6 +241,26 @@ outputs in one sentence.")
 ## ----eval = FALSE-------------------------------------------------------------
 # address <- llm_message("Imagine an address in JSON format that matches the schema.") |>
 #         chat(groq(),.json_schema = address_schema)
+
+## ----eval=FALSE, echo=TRUE----------------------------------------------------
+# get_current_time <- function(tz, format = "%Y-%m-%d %H:%M:%S") {
+#   format(Sys.time(), tz = tz, format = format, usetz = TRUE)
+# }
+# 
+# time_tool <- tidyllm_tool(
+#   .f = get_current_time,
+#   .description = "Returns the current time in a specified timezone. Use this to determine the current time in any location.",
+#   tz = field_chr("The time zone identifier (e.g., 'Europe/Berlin', 'America/New_York', 'Asia/Tokyo', 'UTC'). Required."),
+#   format = field_chr("Format string for the time output. Default is '%Y-%m-%d %H:%M:%S'.")
+# )
+# 
+# 
+# llm_message("What's the exact time in Stuttgart?") |>
+#   chat(openai,.tools=time_tool)
+
+## ----eval=TRUE, echo=FALSE----------------------------------------------------
+llm_message("What's the exact time in Stuttgart?") |>
+   llm_message('The current time in Stuttgart (Europe/Berlin timezone) is 2025-03-03 09:51:22 CET.',.role="assistant")
 
 ## ----embed, eval=FALSE, echo=TRUE---------------------------------------------
 # c("What is the meaning of life?",
@@ -279,6 +317,15 @@ tribble(
 # 
 # #Delte the file from the Google servers after you are done
 # gemini_delete_file(upload_info$name)
+
+## ----eval=FALSE---------------------------------------------------------------
+# list("tidyllm", img(here::here("docs", "logo.png"))) |>
+#   embed(voyage)
+# #> # A tibble: 2 × 2
+# #>   input          embeddings
+# #>   <chr>          <list>
+# #> 1 tidyllm        <dbl [1,024]>
+# #> 2 [IMG] logo.png <dbl [1,024]>
 
 ## ----eval=FALSE---------------------------------------------------------------
 # my_provider <- openai(.model="llama3.2:90b",

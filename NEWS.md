@@ -1,4 +1,137 @@
 # Latest Changes
+# Dev-Version 0.3.4
+Major internal refactor with many small feature improvements:
+
+- Streaming is now done with `httr2::req_peform_connection()` from *httr2 1.1.1.* and later and became much more robust
+- Metadata extraction, logprobs and more other features are now also available in streaming requests
+- Better use of `S7` methods for handling streams and parsing chats
+- OpenAI and Azure OpenAI as well as their batch functions now rely on a request construction function to avoid some code duplication
+- `mistral()` now supports the `.json_schema` argument
+- `claude()` now supports `.json_schema` argument via a json-extractor `TOOL` as suggested by the Anthropic documentation.
+- New tests for batch functions
+- Bug fixed where the system prompts did not work in `claude()` batch requests
+- New `field_object()` for tidyllm schemata:
+```r
+person_schema <- tidyllm_schema(
+  first_name = field_chr("A persons first name"),
+  last_name = field_chr("A persons last name"),
+  occupation = field_chr("A quirky occupation"),
+  address = field_object(
+    "The persons home address",
+    street = field_chr("A street name"),
+    number = field_dbl("A house number"),
+    plz = field_dbl("A zip code for the address"),
+    country = field_fct("Either Germany or France",.levels = c("Germany","France"))
+  )
+)
+
+answer <- llm_message("Imagine a person with a quirky job") |>
+  chat(openai,.json_schema=person_schema)
+  
+answer |>
+   get_reply_data() |>
+   str()
+#> List of 4
+#> $ first_name: chr "Eulalie"
+#>  $ last_name : chr "Featherstone"
+#>  $ occupation: chr "Professional Ostrich Plume Arranger"
+#> $ address   :List of 4
+#> ..$ street : chr "Rue des Plumassiers"
+#>  ..$ number : int 47
+#>  ..$ plz    : int 75004
+#> ..$ country: chr "France"  
+```
+
+- Batch API implemented for `groq()`
+
+# Dev-Version 0.3.3
+
+## Thinking support in Claude
+Claude now supports reasoning:
+
+```r
+conversation <- llm_message("Are there an infinite number of prime numbers such that n mod 4 == 3?") |>
+   chat(claude(.thinking=TRUE)) |>
+  print()
+   
+#> Message History:
+#> system:
+#> You are a helpful assistant
+#> --------------------------------------------------------------
+#> user:
+#> Are there an infinite number of prime numbers such that n
+#> mod 4 == 3?
+#> --------------------------------------------------------------
+#> assistant:
+#> # Infinitude of Primes Congruent to 3 mod 4
+#> 
+#> Yes, there are infinitely many prime numbers $p$ such
+#> that $p \equiv 3 \pmod{4}$ (when $p$ divided by 4 leaves
+#> remainder 3).
+#> 
+#> ## Proof by Contradiction
+#> 
+#> I'll use a proof technique similar to Euclid's classic proof
+#> of the infinitude of primes:
+#> 
+#> 1) Assume there are only finitely many primes $p$ such that
+#> $p \equiv 3 \pmod{4}$. Let's call them $p_1, p_2, ..., p_k$.
+#> 
+#> 2) Consider the number $N = 4p_1p_2...p_k - 1$
+#> 
+#> 3) Note that $N \equiv 3 \pmod{4}$ since $4p_1p_2...p_k
+#> \equiv 0 \pmod{4}$ and $4p_1p_2...p_k - 1 \equiv -1 \equiv 3
+#> \pmod{4}$
+#> 
+#> 4) $N$ must have at least one prime factor $q$
+#> 
+#> 5) For any $i$ between 1 and $k$, we have $N \equiv -1
+#> \pmod{p_i}$, so $N$ is not divisible by any of the primes
+#> $p_1, p_2, ..., p_k$
+#> 
+#> 6) Therefore, $q$ is a prime not in our original list
+#> 
+#> 7) Furthermore, $q$ must be congruent to 3 modulo 4:
+#> - $q$ cannot be 2 because $N$ is odd
+#> - If $q \equiv 1 \pmod{4}$, then $\frac{N}{q} \equiv 3
+#> \pmod{4}$ would need another prime factor congruent to 3
+#> modulo 4
+#> - So $q \equiv 3 \pmod{4}$
+#> 
+#> 8) This contradicts our assumption that we listed all primes
+#> of the form $p \equiv 3 \pmod{4}$
+#> 
+#> Therefore, there must be infinitely many primes of the form
+#> $p \equiv 3 \pmod{4}$.
+#> --------------------------------------------------------------
+
+#Thinking process is stored in API-specific metadata
+conversation |> 
+   get_metadata() |>
+   dplyr::pull(api_specific) |>
+   purrr::map_chr("thinking") |>
+   cat()
+   
+#> The question is asking if there are infinitely many prime numbers $p$ such that $p \equiv 3 \pmod{4}$, i.e., when divided by 4, the remainder is 3.
+#> 
+#> I know that there are infinitely many prime numbers overall. The classic proof is Euclid's proof by contradiction: if there were only finitely many primes, we could multiply them all together, add 1, and get a new number not divisible by any of the existing primes, which gives us a contradiction.
+#> 
+#> For primes of the form $p \equiv 3 \pmod{4}$, we can use a similar proof strategy. 
+#> 
+#> Let's assume there are only finitely many primes $p_1, p_2, \ldots, p_k$ such that $p_i \equiv 3 \pmod{4}$ for all $i$. 
+#> 
+#> Now, consider the number $N = 4 \cdot p_1 \cdot p_2 \cdot \ldots \cdot p_k - 1$. 
+#> 
+#> Note that $N \equiv -1 \equiv 3 \pmod{4}$. 
+#> 
+#> Now, let's consider the prime factorization of $N$. If $N$ is itself prime, then we have found a new prime $N$ such that $N \equiv 3 \pmod{4}$, which contradicts our assumption that we enumerated all such primes.
+#> 
+> ...
+```
+
+## Bugfixes
+
+- Bugfix for `gemini()`: Sytem prompts were not sent to the API in older versions
 
 # Version 0.3.2
 
@@ -34,8 +167,9 @@ llm_message("What's the exact time in Stuttgart?") |>
 #> 2025-03-03 09:51:22 CET.
 #> --------------------------------------------------------------  
 ```  
-You can use the `tidyllm_tool()` function to run to make functions available to a large language model. 
-The model can then run these functions in your current session, if they are needed for a chat request. 
+You can use the `tidyllm_tool()` function to define tools available to a large language model. 
+Once a tool or a list of tools is passed to a model, it can request to run these
+these functions in your current session and use their output for further generation context. 
 
 ## Support for DeepSeek added
 
@@ -70,7 +204,7 @@ In this example, both text (`"tidyllm"`) and an image (`logo.png`) are embedded 
 
 # Version 0.3.1 
 
- ⚠️ There is a bad bug in the latest CRAN release in the `fetch_openai_batch()` function that is now fixed in the latest Github version. For the CRAN version the `fetch_openai_batch()` function throws errors if the logprobs are turned off.
+ ⚠️ There is a bad bug in the latest CRAN release in the `fetch_openai_batch()` function that is only fixed in version 0.3.2. For the release 0.3.1. the `fetch_openai_batch()` function throws errors if the logprobs are turned off.
 
 ## Changes compared to last release
 
