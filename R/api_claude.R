@@ -97,7 +97,7 @@ method(extract_metadata, list(api_claude,class_list))<- function(.api,.response)
   )
 }  
 
-#' A function to get metadata from Openai streaming responses
+#' A function to get metadata from claude streaming responses
 #'
 #' @noRd
 method(extract_metadata_stream, list(api_claude,class_list))<- function(.api,.stream_raw_data) {
@@ -268,6 +268,57 @@ claude_process_tools<- function(.api,
 }
 
 
+#' Inject files into Claude message contents (auto-detect block type)
+#'
+#' @param .claude_messages List of messages as output from to_api_format(.llm, api_claude)
+#' @param .file_ids Character vector of Claude file IDs (from claude_upload_file)
+#' @return Updated list of messages with appropriate file content blocks added to last user message
+#' @noRd
+claude_inject_files <- function(.claude_messages, .file_ids) {
+  if (is.null(.file_ids) || length(.file_ids) == 0) return(.claude_messages)
+  
+  user_idxs <- which(sapply(.claude_messages, function(msg) msg$role == "user"))
+  if (length(user_idxs) == 0) stop("No user message found to inject files into.")
+  last_user_idx <- user_idxs[length(user_idxs)]
+  msg <- .claude_messages[[last_user_idx]]
+  
+  # For each file, get metadata and inject correct block type
+  file_blocks <- lapply(.file_ids, function(fid) {
+    meta <- claude_file_metadata(fid)
+    mime <- meta$mime_type[1] # always a tibble, so use [1]
+    
+    if (mime %in% c("application/pdf", "text/plain")) {
+      # Document block for PDF or text
+      list(
+        type = "document",
+        source = list(
+          type = "file",
+          file_id = fid
+        )
+      )
+    } else if (grepl("^image/", mime)) {
+      # Image block for images
+      list(
+        type = "image",
+        source = list(
+          type = "file",
+          file_id = fid
+        )
+      )
+    } else {
+      stop(sprintf(
+        "Unsupported file type for Claude message: %s (%s). Only PDF, plaintext, and images are supported.",
+        fid, mime
+      ))
+    }
+  })
+  
+  msg$content <- c(msg$content, file_blocks)
+  .claude_messages[[last_user_idx]] <- msg
+  .claude_messages
+}
+
+
 #' Interact with Claude AI models via the Anthropic API
 #'
 #' @param .llm An LLMMessage object containing the conversation history and system prompt.
@@ -286,6 +337,7 @@ claude_process_tools<- function(.api,
 #' @param .timeout Integer specifying the request timeout in seconds (default: 60).
 #' @param .stream Logical; if TRUE, streams the response piece by piece (default: FALSE).
 #' @param .dry_run Logical; if TRUE, returns the prepared request object without executing it (default: FALSE).
+#' @param .file_ids Character; A vector of file IDs for files that were uploaded to Anthropics Servers
 #' @param .thinking Logical; if TRUE, enables Claude's thinking mode for complex reasoning tasks (default: FALSE).
 #' @param .thinking_budget Integer specifying the maximum tokens Claude can spend on thinking (default: 1024). Must be at least 1024.
 #'
@@ -304,7 +356,7 @@ claude_process_tools<- function(.api,
 #'
 #' @export
 claude_chat <- function(.llm,
-                        .model = "claude-3-7-sonnet-20250219",
+                        .model = "claude-sonnet-4-20250514",
                         .max_tokens = 2048,
                         .temperature = NULL,
                         .top_k = NULL,
@@ -313,6 +365,7 @@ claude_chat <- function(.llm,
                         .stop_sequences = NULL,
                         .tools = NULL,
                         .json_schema = NULL,
+                        .file_ids = NULL,
                         .api_url = "https://api.anthropic.com/",
                         .verbose = FALSE,
                         .max_tries = 3,
@@ -347,7 +400,9 @@ claude_chat <- function(.llm,
     ".json_schema must be NULL or a list or an ellmer type object" = is.null(.json_schema) | is.list(.json_schema) | is_ellmer_type(.json_schema),
     "Streaming is not supported for requests with structured outputs" = is.null(.json_schema) || !isTRUE(.stream),
     ".thinking must be logical" = is.logical(.thinking),
-    ".thinking_budget must be a positive integer larger than 1024" = is_integer_valued(.thinking_budget) && .thinking_budget >= 1024
+    ".thinking_budget must be a positive integer larger than 1024" = is_integer_valued(.thinking_budget) && .thinking_budget >= 1024,
+    ".file_ids must be a character vector" = 
+      is.null(.file_ids) | is.character(.file_ids)
   ) |>
     validate_inputs()
   
@@ -376,6 +431,7 @@ claude_chat <- function(.llm,
   
   # Format message list for Claude model
   messages <- to_api_format(.llm,api_obj)
+  messages <- claude_inject_files(messages, .file_ids)
   
   #Put a single tool into a list if only one is provided. 
   tools_def <- if (!is.null(.tools)) {
@@ -405,6 +461,7 @@ claude_chat <- function(.llm,
     httr2::req_url_path("/v1/messages") |>
     httr2::req_headers(
       `x-api-key` = Sys.getenv("ANTHROPIC_API_KEY"),
+      `anthropic-beta` = "files-api-2025-04-14", # <--- CRUCIAL
       `anthropic-version` = "2023-06-01",
       `content-type` = "application/json; charset=utf-8",
       .redact = "x-api-key"
@@ -949,6 +1006,295 @@ claude_list_models <- function(.api_url = "https://api.anthropic.com",
   } else {
     return(NULL)
   }
+}
+
+#' Upload a File to Claude API
+#'
+#' Uploads a file to the Claude API and returns its metadata as a tibble.
+#'
+#' @param .file_path The local file path of the file to upload.
+#' @param .api_url Base URL for the Claude API (default: "https://api.anthropic.com/").
+#' @param .timeout Request timeout in seconds (default: 60).
+#' @param .max_tries Maximum retry attempts for requests (default: 3).
+#' @param .dry_run Logical; if TRUE, returns the prepared request object without executing it.
+#' @return A tibble containing metadata about the uploaded file, including its file_id, name, and size.
+#' @export
+claude_upload_file <- function(.file_path, 
+                               .api_url = "https://api.anthropic.com/",
+                               .timeout = 60,
+                               .max_tries = 3,
+                               .dry_run = FALSE) {
+  
+  # Validate inputs
+  c(
+    ".file_path must be a character string" = is.character(.file_path) && length(.file_path) == 1,
+    "File must exist" = file.exists(.file_path),
+    ".api_url must be a character string" = is.character(.api_url),
+    ".timeout must be an integer" = is_integer_valued(.timeout),
+    ".max_tries must be an integer" = is_integer_valued(.max_tries),
+    ".dry_run must be logical" = is.logical(.dry_run)
+  ) |> validate_inputs()
+  
+  api_obj <- api_claude(short_name = "claude",
+                        long_name  = "Anthropic Claude",
+                        api_key_env_var = "ANTHROPIC_API_KEY")
+  
+  api_key <- get_api_key(api_obj, .dry_run)
+  
+  # Build the request
+  request <- httr2::request(.api_url) |>
+    httr2::req_url_path("/v1/files") |>
+    httr2::req_headers(
+      `x-api-key` = api_key,
+      `anthropic-version` = "2023-06-01",
+      `anthropic-beta` = "files-api-2025-04-14",
+      .redact = "x-api-key"
+    ) |>
+    httr2::req_body_multipart(
+      file = curl::form_file(.file_path)
+    )
+  
+  if (.dry_run) {
+    return(request)
+  }
+  
+  # Perform the request
+  response <- request |>
+    perform_generic_request(.timeout = .timeout, .max_tries = .max_tries)
+  
+  # Handle errors
+  if ("error" %in% names(response$content)) {
+    sprintf("Claude API returned an Error:\nType: %s\nMessage: %s",
+            response$content$error$type,
+            response$content$error$message) |>
+      stop()
+  }
+  
+  # Return metadata as tibble
+  tibble::tibble(
+    file_id = response$content$id,
+    filename = response$content$filename,
+    size_bytes = as.numeric(response$content$size_bytes),
+    mime_type = response$content$mime_type,
+    created_at = response$content$created_at
+  )
+}
+
+#' Retrieve Metadata for a File from Claude API
+#'
+#' Retrieves metadata for a specific file uploaded to the Claude API.
+#'
+#' @param .file_id The file ID to retrieve metadata for.
+#' @param .api_url Base URL for the Claude API (default: "https://api.anthropic.com/").
+#' @param .timeout Request timeout in seconds (default: 60).
+#' @param .max_tries Maximum retry attempts for requests (default: 3).
+#' @param .dry_run Logical; if TRUE, returns the prepared request object without executing it.
+#' @return A tibble containing metadata fields such as file_id, filename, size, and MIME type.
+#' @export
+claude_file_metadata <- function(.file_id,
+                                 .api_url = "https://api.anthropic.com/",
+                                 .timeout = 60,
+                                 .max_tries = 3,
+                                 .dry_run = FALSE) {
+  
+  # Validate inputs
+  c(
+    ".file_id must be a character string" = is.character(.file_id) && length(.file_id) == 1,
+    ".api_url must be a character string" = is.character(.api_url),
+    ".timeout must be an integer" = is_integer_valued(.timeout),
+    ".max_tries must be an integer" = is_integer_valued(.max_tries),
+    ".dry_run must be logical" = is.logical(.dry_run)
+  ) |> validate_inputs()
+  
+  api_obj <- api_claude(short_name = "claude",
+                        long_name  = "Anthropic Claude",
+                        api_key_env_var = "ANTHROPIC_API_KEY")
+  
+  api_key <- get_api_key(api_obj, .dry_run)
+  
+  # Build the request
+  request <- httr2::request(.api_url) |>
+    httr2::req_url_path(paste0("/v1/files/", .file_id)) |>
+    httr2::req_headers(
+      `x-api-key` = api_key,
+      `anthropic-version` = "2023-06-01",
+      `anthropic-beta` = "files-api-2025-04-14",
+      .redact = "x-api-key"
+    )
+  
+  if (.dry_run) {
+    return(request)
+  }
+  
+  # Perform the request
+  response <- request |>
+    perform_generic_request(.timeout = .timeout, .max_tries = .max_tries)
+  
+  # Handle errors
+  if ("error" %in% names(response$content)) {
+    sprintf("Claude API returned an Error:\nType: %s\nMessage: %s",
+            response$content$error$type,
+            response$content$error$message) |>
+      stop()
+  }
+  
+  # Return metadata as tibble
+  tibble::tibble(
+    file_id = response$content$id,
+    filename = response$content$filename,
+    size_bytes = as.numeric(response$content$size_bytes),
+    mime_type = response$content$mime_type,
+    created_at = response$content$created_at
+  )
+}
+
+#' List Files in Claude API
+#'
+#' Lists metadata for files uploaded to the Claude API, supporting pagination.
+#'
+#' @param .limit The maximum number of files to return (default: 20).
+#' @param .order Order of results, either "asc" or "desc" (default: "desc").
+#' @param .api_url Base URL for the Claude API (default: "https://api.anthropic.com/").
+#' @param .timeout Request timeout in seconds (default: 60).
+#' @param .max_tries Maximum retry attempts for requests (default: 3).
+#' @param .dry_run Logical; if TRUE, returns the prepared request object without executing it.
+#' @return A tibble containing metadata for each file, including file_id, filename, size, and MIME type.
+#' @export
+claude_list_files <- function(.limit = 20,
+                              .order = "desc",
+                              .api_url = "https://api.anthropic.com/",
+                              .timeout = 60,
+                              .max_tries = 3,
+                              .dry_run = FALSE) {
+
+  # Validate inputs
+  c(
+    ".limit must be a positive integer" = is_integer_valued(.limit) && .limit > 0,
+    ".order must be 'asc' or 'desc'" = .order %in% c("asc", "desc"),
+    ".api_url must be a character string" = is.character(.api_url),
+    ".timeout must be an integer" = is_integer_valued(.timeout),
+    ".max_tries must be an integer" = is_integer_valued(.max_tries),
+    ".dry_run must be logical" = is.logical(.dry_run)
+  ) |> validate_inputs()
+  
+  api_obj <- api_claude(short_name = "claude",
+                        long_name  = "Anthropic Claude",
+                        api_key_env_var = "ANTHROPIC_API_KEY")
+  
+  api_key <- get_api_key(api_obj, .dry_run)
+  
+  # Build the request
+  request <- httr2::request(.api_url) |>
+    httr2::req_url_path("/v1/files") |>
+    httr2::req_url_query(
+      limit = .limit,
+      order = .order
+    ) |>
+    httr2::req_headers(
+      `x-api-key` = api_key,
+      `anthropic-version` = "2023-06-01",
+      `anthropic-beta` = "files-api-2025-04-14",
+      .redact = "x-api-key"
+    )
+  
+  if (.dry_run) {
+    return(request)
+  }
+  
+  # Perform the request
+  response <- request |>
+    perform_generic_request(.timeout = .timeout, .max_tries = .max_tries)
+  
+  # Handle errors
+  if ("error" %in% names(response$content)) {
+    sprintf("Claude API returned an Error:\nType: %s\nMessage: %s",
+            response$content$error$type,
+            response$content$error$message) |>
+      stop()
+  }
+  
+  # Convert to tibble
+  files <- response$content$data
+  if (length(files) == 0) {
+    return(tibble::tibble(
+      file_id = character(0),
+      filename = character(0),
+      size_bytes = numeric(0),
+      mime_type = character(0),
+      created_at = character(0)
+    ))
+  }
+  
+  purrr::map_dfr(files, ~ tibble::tibble(
+    file_id = .x$id,
+    filename = .x$filename,
+    size_bytes = as.numeric(.x$size_bytes),
+    mime_type = .x$mime_type,
+    created_at = .x$created_at
+  ))
+}
+
+#' Delete a File from Claude API
+#'
+#' Deletes a specific file from the Claude API using its file ID.
+#'
+#' @param .file_id The file ID to delete.
+#' @param .api_url Base URL for the Claude API (default: "https://api.anthropic.com/").
+#' @param .timeout Request timeout in seconds (default: 60).
+#' @param .max_tries Maximum retry attempts for requests (default: 3).
+#' @param .dry_run Logical; if TRUE, returns the prepared request object without executing it.
+#' @return Invisibly returns NULL. Prints a confirmation message upon successful deletion.
+#' @export
+claude_delete_file <- function(.file_id,
+                               .api_url = "https://api.anthropic.com/",
+                               .timeout = 60,
+                               .max_tries = 3,
+                               .dry_run = FALSE) {
+  
+  # Validate inputs
+  c(
+    ".file_id must be a character string" = is.character(.file_id) && length(.file_id) == 1,
+    ".api_url must be a character string" = is.character(.api_url),
+    ".timeout must be an integer" = is_integer_valued(.timeout),
+    ".max_tries must be an integer" = is_integer_valued(.max_tries),
+    ".dry_run must be logical" = is.logical(.dry_run)
+  ) |> validate_inputs()
+  
+  api_obj <- api_claude(short_name = "claude",
+                        long_name  = "Anthropic Claude",
+                        api_key_env_var = "ANTHROPIC_API_KEY")
+  
+  api_key <- get_api_key(api_obj, .dry_run)
+  
+  # Build the request
+  request <- httr2::request(.api_url) |>
+    httr2::req_url_path(paste0("/v1/files/", .file_id)) |>
+    httr2::req_method("DELETE") |>
+    httr2::req_headers(
+      `x-api-key` = api_key,
+      `anthropic-version` = "2023-06-01",
+      `anthropic-beta` = "files-api-2025-04-14",
+      .redact = "x-api-key"
+    )
+  
+  if (.dry_run) {
+    return(request)
+  }
+  
+  # Perform the request
+  response <- request |>
+    perform_generic_request(.timeout = .timeout, .max_tries = .max_tries)
+  
+  # Handle errors (though DELETE typically returns 204 with no content)
+  if ("error" %in% names(response$content)) {
+    sprintf("Claude API returned an Error:\nType: %s\nMessage: %s",
+            response$content$error$type,
+            response$content$error$message) |>
+      stop()
+  }
+  
+  message("File ", .file_id, " has been successfully deleted.")
+  invisible(NULL)
 }
 
 #' Provider Function for Claude models on the Anthropic API

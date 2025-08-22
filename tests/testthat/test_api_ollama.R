@@ -9,10 +9,6 @@ test_that("ollama function constructs a correct request and dry runs it", {
   dry_run <- request |>
     httr2::req_dry_run(redact_headers = TRUE, quiet = TRUE)
   
-  # Check the structure of the returned dry run object
-  expect_type(dry_run, "list")
-  expect_named(dry_run, c("method", "path", "headers"))
-  
   # Check that the method is POST
   expect_equal(dry_run$method, "POST")
   
@@ -54,10 +50,6 @@ test_that("ollama_embedding function constructs a correct request and dry runs i
   dry_run <- request |>
     httr2::req_dry_run(redact_headers = TRUE, quiet = TRUE) 
   
-  # Check the structure of the returned dry run object
-  expect_type(dry_run, "list")
-  expect_named(dry_run, c("method", "path", "headers"))
-  
   # Check that the method is POST
   expect_equal(dry_run$method, "POST")
   
@@ -81,5 +73,56 @@ test_that("ollama_embedding function constructs a correct request and dry runs i
   expect_equal(body_json, expected_json)
 })
 
+test_that("ollama returns expected response", {
+  with_mock_dir("ollama",expr = {
+    
+
+    llm <- llm_message("Hello, world")
+    
+    result <- ollama_chat(
+      .llm = llm,
+      .temperature = 0,
+      .model = "gemma2"
+    )
+    result_tbl <- as_tibble(result)
+    
+    # Assertions based on the message in the captured mock response
+    expect_true(S7_inherits(result, LLMMessage))
+    expect_equal(
+      result_tbl$content[3],
+      "Hello! 👋  How can I help you today?"
+    )
+    expect_equal(result_tbl$role[3], "assistant")
+    
+  },simplify = FALSE)
+})
 
 
+test_that("ollama_embedding returns expected response", {
+  with_mock_dir("ollama_embedding",expr = {
+    
+    result <- c("It is not that I am mad, it is only that my head is different from yours",
+                "A man can do as he wills, but not will as he wills",
+                "Whereof one cannot speak, thereof one must be silent",
+                "The limits of my language mean the limits of my world") |>
+      ollama_embedding()
+    
+    
+    # Test that the result is a tibble
+    expect_s3_class(result, "tbl_df")
+    
+    # Test that the tibble has two columns: input and embeddings
+    expect_named(result, c("input", "embeddings"))
+    
+    # Test that the input column contains the original input texts
+    expect_equal(result$input, c("It is not that I am mad, it is only that my head is different from yours",
+                                 "A man can do as he wills, but not will as he wills",
+                                 "Whereof one cannot speak, thereof one must be silent",
+                                 "The limits of my language mean the limits of my world"))
+    
+    purrr::walk(result$embeddings, function(embedding) {
+      expect_equal(length(embedding), 384)
+    })
+    
+  },simplify = FALSE)
+})

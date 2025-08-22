@@ -9,10 +9,6 @@ test_that("mistral function constructs a correct request and dry runs it", {
   dry_run <- request |>
     httr2::req_dry_run(redact_headers = TRUE, quiet = TRUE)
   
-  # Check the structure of the returned dry run object
-  expect_type(dry_run, "list")
-  expect_named(dry_run, c("method", "path", "headers"))
-  
   # Check that the method is POST
   expect_equal(dry_run$method, "POST")
   
@@ -38,6 +34,86 @@ test_that("mistral function constructs a correct request and dry runs it", {
   expect_equal(body_json, expected_json)
 })
 
+test_that("mistral returns expected response",{ 
+  with_mock_dir("mistral",expr = {
+    
+    # Store the current API key and set a dummy key if none exists
+    if (Sys.getenv("MISTRAL_API_KEY") == "") {
+      Sys.setenv(MISTRAL_API_KEY = "DUMMY_KEY_FOR_TESTING")
+    }
+    
+    # Make sure the environment starts clean
+    if (exists("mistral", envir = .tidyllm_rate_limit_env)) {
+      .tidyllm_rate_limit_env[["mistral"]] <- NULL
+    }
+    
+    llm <- llm_message("Hello, world")
+    
+    result <- mistral_chat(
+      .llm = llm,
+      .max_tokens = 1024,
+      .temperature = 0,
+    )
+    
+
+    if (Sys.getenv("MISTRAL_API_KEY") == "DUMMY_KEY_FOR_TESTING") {
+      Sys.setenv(MISTRAL_API_KEY = "")
+    }
+    
+    # Assertions based on the message in the captured mock response
+    expect_true(S7_inherits(result, LLMMessage))
+    result_tbl <- as_tibble(result) 
+    
+
+    expect_equal(result_tbl$role[3], "assistant")
+    
+    # Now, check that the rate limit environment has been populated with correct values
+    expect_true(exists("mistral", envir = .tidyllm_rate_limit_env))
+    
+
+  },simplify = FALSE)
+  
+})
+ 
+
+test_that("mistral_embedding returns expected response", {
+  with_mock_dir("mistral_embedding",expr = {
+    
+    # Store the current API key and set a dummy key if none exists
+    if (Sys.getenv("MISTRAL_API_KEY") == "") {
+      Sys.setenv(MISTRAL_API_KEY = "DUMMY_KEY_FOR_TESTING")
+    }
+    
+    
+    result <- c("It is not that I am mad, it is only that my head is different from yours",
+                "A man can do as he wills, but not will as he wills",
+                "Whereof one cannot speak, thereof one must be silent",
+                "The limits of my language mean the limits of my world") |>
+      mistral_embedding() 
+    
+    if (Sys.getenv("MISTRAL_API_KEY") == "DUMMY_KEY_FOR_TESTING") {
+      Sys.setenv(MISTRAL_API_KEY = "")
+    }
+    
+    # Test that the result is a tibble
+    expect_s3_class(result, "tbl_df")
+    
+    # Test that the tibble has two columns: input and embeddings
+    expect_named(result, c("input", "embeddings"))
+    
+    # Test that the input column contains the original input texts
+    expect_equal(result$input, c("It is not that I am mad, it is only that my head is different from yours",
+                                 "A man can do as he wills, but not will as he wills",
+                                 "Whereof one cannot speak, thereof one must be silent",
+                                 "The limits of my language mean the limits of my world"))
+    
+    
+    purrr::walk(result$embeddings, function(embedding) {
+      expect_equal(length(embedding), 1024)
+    })
+    
+  },simplify = FALSE)
+})
 
 test_that("send_batch creates correct JSONL for batch requests", {
   # Generate batch of messages

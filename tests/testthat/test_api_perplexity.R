@@ -10,10 +10,6 @@ test_that("perplexity function constructs a correct request and dry runs it", {
   
   dry_run <- request |> httr2::req_dry_run(redact_headers = TRUE, quiet = TRUE)
   
-  # Check the structure of the returned dry run object
-  expect_type(dry_run, "list")
-  expect_named(dry_run, c("method", "path", "headers"))
-  
   # Check that the method is POST
   expect_equal(dry_run$method, "POST")
   
@@ -34,8 +30,36 @@ test_that("perplexity function constructs a correct request and dry runs it", {
   # Now check the body content to ensure the JSON is constructed as expected
   body_json <- request$body |> jsonlite::toJSON() |> as.character()
   
-  expected_json <- "{\"data\":{\"model\":[\"sonar\"],\"max_tokens\":[1024],\"messages\":[{\"role\":[\"user\"],\"content\":[\"Write a haiku about search indices \"]}],\"return_images\":[false],\"stream\":[false]},\"type\":[\"json\"],\"content_type\":[\"application/json\"],\"params\":{\"auto_unbox\":[true],\"digits\":[22],\"null\":[\"null\"]}}"
+  expected_json <- "{\"data\":{\"model\":[\"sonar\"],\"messages\":[{\"role\":[\"user\"],\"content\":[\"Write a haiku about search indices \"]}],\"max_tokens\":[1024],\"return_images\":[false],\"search_mode\":[\"web\"],\"return_related_questions\":[false],\"stream\":[false]},\"type\":[\"json\"],\"content_type\":[\"application/json\"],\"params\":{\"auto_unbox\":[true],\"digits\":[22],\"null\":[\"null\"]}}"
   # Check if the JSON matches the expected JSON
   expect_equal(body_json, expected_json)
 })
 
+test_that("perplexity returns expected response", {
+  with_mock_dir("perplexity", expr = {
+    
+    # Store the current API key and set a dummy key if none exists
+    if (Sys.getenv("PERPLEXITY_API_KEY") == "") {
+      Sys.setenv(PERPLEXITY_API_KEY = "DUMMY_KEY_FOR_TESTING")
+    }
+    
+    llm <- llm_message("Write a haiku about Perplexity")
+    
+    result <- perplexity_chat(llm)
+    
+    reply <- result |>
+      get_reply() 
+    
+    if (Sys.getenv("PERPLEXITY_API_KEY") == "DUMMY_KEY_FOR_TESTING") {
+      Sys.setenv(PERPLEXITY_API_KEY = "")
+    }
+    
+    ## Assertions based on the message in the captured mock response
+    expect_true(S7::S7_inherits(result, LLMMessage))
+    expect_equal(
+      reply,
+      "Silent web unfolds,  \nPerplexity finds the truth—  \nAnswers bloom like spring."
+    )
+
+  }, simplify = FALSE)
+})

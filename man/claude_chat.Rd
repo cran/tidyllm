@@ -6,7 +6,7 @@
 \usage{
 claude_chat(
   .llm,
-  .model = "claude-3-7-sonnet-20250219",
+  .model = "claude-sonnet-4-20250514",
   .max_tokens = 2048,
   .temperature = NULL,
   .top_k = NULL,
@@ -15,6 +15,7 @@ claude_chat(
   .stop_sequences = NULL,
   .tools = NULL,
   .json_schema = NULL,
+  .file_ids = NULL,
   .api_url = "https://api.anthropic.com/",
   .verbose = FALSE,
   .max_tries = 3,
@@ -45,6 +46,8 @@ claude_chat(
 \item{.tools}{List of additional tools or functions the model can use.}
 
 \item{.json_schema}{A schema to enforce an output structure}
+
+\item{.file_ids}{Character; A vector of file IDs for files that were uploaded to Anthropics Servers}
 
 \item{.api_url}{Base URL for the Anthropic API (default: "https://api.anthropic.com/").}
 

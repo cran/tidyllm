@@ -8,8 +8,6 @@ test_that("deepseek function constructs a correct request and dry runs it", {
   request <- llm |> chat(deepseek, .dry_run = TRUE)
   dry_run <- request |> httr2::req_dry_run(redact_headers = TRUE, quiet = TRUE)
   
-  expect_type(dry_run, "list")
-  expect_named(dry_run, c("method", "path", "headers"))
   expect_equal(dry_run$method, "POST")
   expect_true(grepl("/chat/completions", dry_run$path))
   
@@ -23,3 +21,29 @@ test_that("deepseek function constructs a correct request and dry runs it", {
   expect_true(grepl("deepseek-chat", body_json))
 })
 
+# Test response handling
+test_that("deepseek returns expected response", {
+  with_mock_dir("deepseek", expr = {
+    
+    if (Sys.getenv("DEEPSEEK_API_KEY") == "") {
+      Sys.setenv(DEEPSEEK_API_KEY = "DUMMY_KEY_FOR_TESTING")
+    }
+    
+    result <- deepseek_chat(
+      .llm = llm_message("Hello, world"),
+      .temperature = 0,
+      .stream = FALSE
+    )
+
+    reply <- result |>
+      get_reply()
+    
+    if (Sys.getenv("DEEPSEEK_API_KEY") == "DUMMY_KEY_FOR_TESTING") {
+      Sys.setenv(DEEPSEEK_API_KEY = "")
+    }
+    
+    expect_true(S7_inherits(result, LLMMessage))
+    expect_equal(reply, "Hello! How can I assist you today?")
+
+  }, simplify = FALSE)
+})

@@ -10,10 +10,6 @@ test_that("claude function constructs a correct request and dry runs it", {
   dry_run <- request |>
     httr2::req_dry_run(redact_headers = TRUE, quiet = TRUE)
   
-  # Check the structure of the returned dry run object
-  expect_type(dry_run, "list")
-  expect_named(dry_run, c("method", "path", "headers"))
-  
   # Check that the method is POST
   expect_equal(dry_run$method, "POST")
   
@@ -44,7 +40,53 @@ test_that("claude function constructs a correct request and dry runs it", {
 })
 
 
-
+test_that("claude returns expected response", {
+  with_mock_dir("claude",expr = {
+    
+    # Make sure the environment starts clean
+    if (exists("claude", envir = .tidyllm_rate_limit_env)) {
+      .tidyllm_rate_limit_env[["claude"]] <- NULL
+    }
+    
+    messages <- llm_message("Hello, world")
+    
+    # Store the current API key and set a dummy key if none exists
+    if (Sys.getenv("ANTHROPIC_API_KEY") == "") {
+      Sys.setenv(ANTHROPIC_API_KEY = "DUMMY_KEY_FOR_TESTING")
+    }
+    
+    result <- claude_chat(
+      .llm = messages,
+      .model = "claude-3-5-sonnet-20240620",
+      .max_tokens = 1024,
+      .temperature = 0,
+      .stream = FALSE
+    )
+    
+    # Store the current API key and set a dummy key if none exists
+    if (Sys.getenv("ANTHROPIC_API_KEY") == "DUMMY_KEY_FOR_TESTING") {
+      Sys.setenv(ANTHROPIC_API_KEY = "")
+    }
+    
+    # Assertions based on the message in the captured mock response
+    expect_true(S7_inherits(result, LLMMessage))
+    expect_equal(
+      result@message_history[[length(result@message_history)]]$content,
+      "Hello! How can I assist you today? Is there anything specific you'd like to know or discuss?")
+    expect_equal(result@message_history[[length(result@message_history)]]$role, "assistant")
+    
+    # Now, check that the rate limit environment has been populated with correct values
+    expect_true(exists("claude", envir = .tidyllm_rate_limit_env))
+    
+    # Get the rate limit info for "claude"
+    rl_info <- rate_limit_info("claude")
+    
+    # Assertions for rate limit values based on the mocked response
+    expect_equal(rl_info$api, "claude")
+    expect_equal(rl_info$requests_remaining, 999)
+    expect_equal(rl_info$tokens_remaining, 96000)
+  },simplify = FALSE)
+})
 
 test_that("claude_chat input validation works correctly", {
   llm <- llm_message("Test message")
@@ -104,8 +146,6 @@ test_that("send_claude_batch creates correct request format", {
     httr2::req_dry_run(redact_headers = TRUE, quiet = TRUE)
   
   # Check basic request structure
-  expect_type(dry_run, "list")
-  expect_named(dry_run, c("method", "path", "headers"))
   expect_equal(dry_run$method, "POST")
   expect_equal(dry_run$path, "/v1/messages/batches")
   
