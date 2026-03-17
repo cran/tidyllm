@@ -6,7 +6,7 @@
 \usage{
 groq_chat(
   .llm,
-  .model = "deepseek-r1-distill-llama-70b",
+  .model = "moonshotai/kimi-k2-instruct-0905",
   .max_tokens = 1024,
   .temperature = NULL,
   .top_p = NULL,
@@ -17,12 +17,13 @@ groq_chat(
   .tools = NULL,
   .tool_choice = NULL,
   .api_url = "https://api.groq.com/",
-  .json = FALSE,
+  .json_schema = NULL,
   .timeout = 60,
   .verbose = FALSE,
   .stream = FALSE,
   .dry_run = FALSE,
-  .max_tries = 3
+  .max_tries = 3,
+  .max_tool_rounds = 10
 )
 }
 \arguments{
@@ -50,7 +51,7 @@ groq_chat(
 
 \item{.api_url}{Base URL for the Groq API (default: "https://api.groq.com/").}
 
-\item{.json}{Whether the response should be structured as JSON (default: FALSE).}
+\item{.json_schema}{A list or tidyllm schema created with \code{tidyllm_schema()} for structured JSON output (optional).}
 
 \item{.timeout}{Request timeout in seconds (default: 60).}
 
@@ -61,6 +62,9 @@ groq_chat(
 \item{.dry_run}{If TRUE, performs a dry run and returns the constructed request object without executing it (default: FALSE).}
 
 \item{.max_tries}{Maximum retries to peform request}
+
+\item{.max_tool_rounds}{Integer specifying the maximum number of tool use iterations (default: 10).
+Set to 1 for single-round tool use, or higher for multi-turn agentic loops.}
 }
 \value{
 A new \code{LLMMessage} object containing the original messages plus the assistant's response.

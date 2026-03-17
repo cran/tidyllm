@@ -1,6 +1,6 @@
 Package: tidyllm
 Title: Tidy Integration of Large Language Models
-Version: 0.3.5
+Version: 0.4.0
 Authors@R: c(
     person("Eduard", "Brüll", NULL, "eduard.bruell@zew.de", role = c("aut", "cre")),
     person("Jia", "Zhang", NULL, NULL, role = "ctb")
@@ -10,7 +10,7 @@ License: MIT + file LICENSE
 URL: https://edubruell.github.io/tidyllm/
 BugReports: https://github.com/edubruell/tidyllm/issues
 Encoding: UTF-8
-RoxygenNote: 7.3.2
+RoxygenNote: 7.3.3
 VignetteBuilder: knitr
 Suggests: knitr, rmarkdown, testthat (>= 3.0.0), tidyverse, httptest2,
         httpuv, ellmer
@@ -23,14 +23,14 @@ Collate: 'tidyllm-package.R' 'utilites.R' 'embedding_helpers.R'
         'rate_limits.R' 'tidyllm_schema.R' 'tools.R' 'api_openai.R'
         'api_azure_openai.R' 'api_groq.R' 'api_mistral.R'
         'api_perplexity.R' 'api_deepseek.R' 'api_voyage.R'
-        'api_ollama.R' 'api_claude.R' 'api_gemini.R' 'pdfbatch.R'
-        'zzz.R'
+        'api_ollama.R' 'api_claude.R' 'api_gemini.R' 'api_ellmer.R'
+        'api_openrouter.R' 'api_llamacpp.R' 'pdfbatch.R' 'zzz.R'
 Depends: R (>= 4.2.0)
 Config/testthat/edition: 3
 NeedsCompilation: no
-Packaged: 2025-08-22 08:19:05 UTC; ebr
+Packaged: 2026-03-17 11:37:27 UTC; ebr
 Author: Eduard Brüll [aut, cre],
   Jia Zhang [ctb]
 Maintainer: Eduard Brüll <eduard.bruell@zew.de>
 Repository: CRAN
-Date/Publication: 2025-08-22 10:00:13 UTC
+Date/Publication: 2026-03-17 12:00:02 UTC

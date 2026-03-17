@@ -6,7 +6,7 @@
 \usage{
 openai_chat(
   .llm,
-  .model = "gpt-4.1",
+  .model = "gpt-5.1-chat-latest",
   .max_completion_tokens = NULL,
   .reasoning_effort = NULL,
   .frequency_penalty = NULL,
@@ -28,13 +28,14 @@ openai_chat(
   .logprobs = NULL,
   .top_logprobs = NULL,
   .tools = NULL,
-  .tool_choice = NULL
+  .tool_choice = NULL,
+  .max_tool_rounds = 10
 )
 }
 \arguments{
 \item{.llm}{An \code{LLMMessage} object containing the conversation history.}
 
-\item{.model}{The identifier of the model to use (default: "gpt-4o").}
+\item{.model}{The identifier of the model to use (default: "gpt-5.1-chat-latest").}
 
 \item{.max_completion_tokens}{An upper bound for the number of tokens that can be generated for a completion.}
 
@@ -79,6 +80,9 @@ openai_chat(
 \item{.tools}{Either a single TOOL object or a list of TOOL objects representing the available functions for tool calls.}
 
 \item{.tool_choice}{A character string specifying the tool-calling behavior; valid values are "none", "auto", or "required".}
+
+\item{.max_tool_rounds}{Integer specifying the maximum number of tool use iterations (default: 10).
+Set to 1 for single-round tool use, or higher for multi-turn agentic loops.}
 }
 \value{
 A new \code{LLMMessage} object containing the original messages plus the assistant's response.

@@ -2,15 +2,18 @@
 #' @description A class representing a tool for Language Model function calling
 #' 
 #' @slot description Character string describing what the tool does
-#' @slot input_schema List of parameter schemas for the tool
-#' @slot function_call Function to be called by the LLM
+#' @slot input_schema List of parameter schemas for the tool (empty for builtin tools)
+#' @slot func Function to be called by the LLM (dummy function for builtin tools that raises an error)
+#' @slot name Character string name of the tool
+#' @slot builtin List containing provider-native builtin tool definitions (empty for custom tools)
 #'
 #' @noRd 
 TOOL <- new_class("TOOL", properties = list(
   description  = class_character,
   input_schema = class_list,
   func         = class_function,
-  name         = class_character
+  name         = class_character,
+  builtin      = class_list
 ))
 
 
@@ -86,17 +89,194 @@ tidyllm_tool <- function(.f, .description = character(0), ...) {
     description = .description,
     input_schema = schema_args,
     func = .f,
-    name = .name
+    name = .name,
+    builtin = list()
   )
   
   obj
 }
 
+is_ellmer_class <- function(classes, class_name) {
+  any(classes %in% c(paste0("ellmer::", class_name), paste0("ellmer_", class_name)))
+}
+
+#' Convert an ellmer Tool to a tidyllm TOOL
+#'
+#' @description
+#' Converts an ellmer `ToolDef` or `ToolBuiltIn` object to a tidyllm `TOOL` object,
+#' allowing seamless integration of ellmer-defined tools and builtin provider tools
+#' with tidyllm workflows.
+#'
+#' @param .ellmer_tool An ellmer `ToolDef` object created via `ellmer::tool()`,
+#'   or a builtin tool like `ellmer::claude_tool_web_search()`
+#'
+#' @return A `TOOL` class object that can be used with tidyllm `chat()` functions
+#'
+#' @details
+#' This function supports two types of ellmer tools:
+#'
+#' **Custom ToolDef objects**: Extracts the function, description, and argument
+#' schemas from an ellmer tool and converts them to tidyllm's internal representation.
+#' Ellmer type objects are automatically converted to tidyllm field descriptors.
+#'
+#' **Builtin ToolBuiltIn objects**: Converts provider-native builtin tools (like
+#' Claude's web search) to tidyllm format. For builtin tools, the tool definition
+#' is passed through as-is to the provider's API, which handles the tool execution
+#' natively.
+#'
+#' @examples
+#' \dontrun{
+#' library(ellmer)
+#'
+#' # Example 1: Custom tool
+#' tool_rnorm <- ellmer::tool(
+#'   rnorm,
+#'   description = "Draw numbers from a random normal distribution",
+#'   arguments = list(
+#'     n = ellmer::type_integer("The number of observations"),
+#'     mean = ellmer::type_number("The mean value"),
+#'     sd = ellmer::type_number("The standard deviation")
+#'   )
+#' )
+#'
+#' tidyllm_tool_rnorm <- ellmer_tool(tool_rnorm)
+#'
+#' llm_message("Generate 100 random numbers") |> 
+#'   chat(openai(), .tools = tidyllm_tool_rnorm)
+#'
+#' # Example 2: Builtin tool
+#' web_search <- ellmer_tool(ellmer::claude_tool_web_search())
+#' llm_message("What are the latest AI developments?") |>
+#'   chat(claude(), .tools = web_search)
+#' }
+#' @export
+ellmer_tool <- function(.ellmer_tool) {
+  if (!requireNamespace("ellmer", quietly = TRUE)) {
+    stop("ellmer package required for ellmer_tool(). Install with: install.packages('ellmer')")
+  }
+  
+  tool_classes <- class(.ellmer_tool)
+  is_tool_def <- is_ellmer_class(tool_classes, "ToolDef")
+  is_builtin  <- is_ellmer_class(tool_classes, "ToolBuiltIn")
+  
+  if (!is_tool_def && !is_builtin) {
+    stop("Input must be an ellmer ToolDef or ToolBuiltIn object created via ellmer::tool() or ellmer::*_tool_*()")
+  }
+  
+  fn_name <- .ellmer_tool@name %||% "unknown"
+  
+  if (is_builtin) {
+    dummy_fn <- function() {
+      stop(sprintf("Builtin tool '%s' is executed by the provider, not locally", fn_name))
+    }
+    
+    TOOL(
+      description = sprintf("Builtin tool: %s", fn_name),
+      input_schema = list(),
+      func = dummy_fn,
+      name = fn_name,
+      builtin = list(.ellmer_tool@json)
+    )
+  } else {
+    fn_desc <- .ellmer_tool@description %||% ""
+    arguments_obj <- .ellmer_tool@arguments
+    
+    if (!is_ellmer_class(class(arguments_obj), "TypeObject")) {
+      stop("ellmer tool @arguments must be a TypeObject")
+    }
+    
+    properties <- arguments_obj@properties
+    
+    if (length(properties) == 0) {
+      input_schema <- list()
+    } else {
+      input_schema <- purrr::map(properties, function(arg_type) {
+        convert_ellmer_type_to_field(arg_type)
+      })
+    }
+    
+    TOOL(
+      description = fn_desc,
+      input_schema = input_schema,
+      func = .ellmer_tool,
+      name = fn_name,
+      builtin = list()
+    )
+  }
+}
+
+
+#' Convert an ellmer Type to a tidyllm Field
+#'
+#' @description Internal helper to convert ellmer type objects to tidyllm field descriptors
+#'
+#' @param .ellmer_type An ellmer type object (TypeBasic, TypeEnum, TypeArray, TypeObject)
+#'
+#' @return A `tidyllm_field` object
+#'
+#' @noRd
+convert_ellmer_type_to_field <- function(.ellmer_type) {
+  type_class <- class(.ellmer_type)
+  
+  if (is_ellmer_class(type_class, "TypeBasic")) {
+    ellmer_type_name <- .ellmer_type@type
+    
+    type_map <- c(
+      "string" = "string",
+      "integer" = "number",
+      "number" = "number",
+      "boolean" = "boolean"
+    )
+    
+    tidyllm_type <- type_map[ellmer_type_name] %||% "string"
+    
+    tidyllm_field(
+      type = tidyllm_type,
+      description = .ellmer_type@description %||% "",
+      enum = character(0),
+      vector = FALSE,
+      schema = list()
+    )
+  } else if (is_ellmer_class(type_class, "TypeEnum")) {
+    tidyllm_field(
+      type = "string",
+      description = .ellmer_type@description %||% "",
+      enum = as.character(.ellmer_type@values),
+      vector = FALSE,
+      schema = list()
+    )
+  } else if (is_ellmer_class(type_class, "TypeArray")) {
+    inner_field <- convert_ellmer_type_to_field(.ellmer_type@items)
+    inner_field@vector <- TRUE
+    inner_field
+  } else if (is_ellmer_class(type_class, "TypeObject")) {
+    properties <- .ellmer_type@properties
+    nested_fields <- purrr::map(properties, convert_ellmer_type_to_field)
+    nested_schema <- build_schema(nested_fields)
+    
+    tidyllm_field(
+      type = "object",
+      description = .ellmer_type@description %||% "",
+      enum = character(0),
+      vector = FALSE,
+      schema = nested_schema
+    )
+  } else {
+    stop("Unsupported ellmer type class: ", paste(type_class, collapse = ", "))
+  }
+}
 
 #Generics for tools
 tools_to_api <- new_generic("tools_to_api", c(".api", ".tools"))
 run_tool_calls <- new_generic("run_tool_calls", c(".api",".tool_calls",".tools"))
 send_tool_results <- new_generic("send_tool_results", c(".api",".request",".request_body"))
+
+#Generics for the unified tool loop
+has_tool_calls <- new_generic("has_tool_calls", c(".api", ".response"))
+extract_tool_calls <- new_generic("extract_tool_calls", c(".api", ".response"))
+append_tool_messages <- new_generic("append_tool_messages", c(".api", ".request_body", ".response", ".tool_results"))
+
+method(has_tool_calls, list(APIProvider, class_any)) <- function(.api, .response) FALSE
 
 print.TOOL  <- new_external_generic("base", "print", "x")
 
@@ -109,27 +289,50 @@ method(print.TOOL,TOOL) <- function(x, ...){
   purrr::iwalk(x@input_schema, ~ cat("    -", .y, ": ", .x@type, "\n"))
 }
 
+field_to_param_schema <- function(param) {
+  schema <- parse_field(param)
+  if (length(param@description) > 0) {
+    schema$description <- param@description
+  }
+  schema
+}
+
 #' Generic method to convert a tidyllm TOOL definition for a generic API
 #' @noRd
 method(tools_to_api, list(APIProvider, class_list)) <- function(.api, .tools) {
   purrr::map(.tools, function(tool) {
-    list(
-      type = "function",
-      `function` = list(
-        name = tool@name,
-        description = tool@description,
-        parameters = list(
-          type = "object",
-          properties = purrr::map(tool@input_schema, function(param) {
-            list(
-              type = param@type,
-              description = param@description
-            )
-          }),
-          required = as.list(names(tool@input_schema)) # Assume all are required
+    if (length(tool@builtin) > 0) {
+      tool@builtin[[1]]
+    } else {
+      list(
+        type = "function",
+        `function` = list(
+          name = tool@name,
+          description = tool@description,
+          parameters = list(
+            type = "object",
+            properties = purrr::map(tool@input_schema, field_to_param_schema),
+            required = as.list(names(tool@input_schema))
+          )
         )
       )
-    )
+    }
   })
 }
 
+process_tool_loop <- function(.api, .response, .tools_def, .request_body,
+                               .request, .timeout, .max_tries, .max_tool_rounds = 10) {
+  round <- 0
+  while (has_tool_calls(.api, .response) && round < .max_tool_rounds) {
+    round <- round + 1
+    tool_calls   <- extract_tool_calls(.api, .response)
+    tool_results <- run_tool_calls(.api, tool_calls, .tools_def)
+    .request_body <- append_tool_messages(.api, .request_body, .response, tool_results)
+    .request  <- httr2::req_body_json(.request, data = .request_body)
+    .response <- perform_chat_request(.request, .api, FALSE, .timeout, .max_tries)
+  }
+  if (round >= .max_tool_rounds && has_tool_calls(.api, .response)) {
+    stop(sprintf("Maximum tool rounds (%d) reached with pending tool calls", .max_tool_rounds))
+  }
+  .response
+}

@@ -6,7 +6,7 @@
 \usage{
 ollama_chat(
   .llm,
-  .model = "gemma2",
+  .model = "qwen3.5:4b",
   .stream = FALSE,
   .seed = NULL,
   .json_schema = NULL,
@@ -22,8 +22,10 @@ ollama_chat(
   .repeat_last_n = NULL,
   .repeat_penalty = NULL,
   .tools = NULL,
+  .max_tool_rounds = 10,
   .tfs_z = NULL,
   .stop = NULL,
+  .think = NULL,
   .ollama_server = "http://localhost:11434",
   .timeout = 120,
   .keep_alive = NULL,
@@ -33,7 +35,7 @@ ollama_chat(
 \arguments{
 \item{.llm}{An LLMMessage object containing the conversation history and system prompt.}
 
-\item{.model}{Character string specifying the Ollama model to use (default: "gemma2")}
+\item{.model}{Character string specifying the Ollama model to use (default: "qwen3-vl")}
 
 \item{.stream}{Logical; whether to stream the response (default: FALSE)}
 
@@ -65,9 +67,14 @@ ollama_chat(
 
 \item{.tools}{Either a single TOOL object or a list of TOOL objects representing the available functions for tool calls.}
 
+\item{.max_tool_rounds}{Integer; maximum number of tool use iterations for multi-turn tool calling (default: 10).
+Set to 1 for single-round tool use, or higher for multi-turn agentic loops.}
+
 \item{.tfs_z}{Float; tail free sampling parameter (default: NULL)}
 
 \item{.stop}{Character; custom stop sequence(s) (default: NULL)}
+
+\item{.think}{Logical or character; controls thinking mode for supported models like Qwen3. Use FALSE to disable, TRUE to enable, or "high"/"medium"/"low" to set effort level (default: NULL - model default)}
 
 \item{.ollama_server}{String; Ollama API endpoint (default: "http://localhost:11434")}
 

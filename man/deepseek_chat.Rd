@@ -7,6 +7,7 @@
 deepseek_chat(
   .llm,
   .model = "deepseek-chat",
+  .thinking = NULL,
   .max_tokens = 2048,
   .temperature = NULL,
   .top_p = NULL,
@@ -22,13 +23,16 @@ deepseek_chat(
   .timeout = 60,
   .verbose = FALSE,
   .dry_run = FALSE,
-  .max_tries = 3
+  .max_tries = 3,
+  .max_tool_rounds = 10
 )
 }
 \arguments{
 \item{.llm}{An \code{LLMMessage} object containing the conversation history.}
 
 \item{.model}{The identifier of the model to use (default: "deepseek-chat").}
+
+\item{.thinking}{If TRUE, switches to the \code{deepseek-reasoner} model and captures the reasoning trace (default: NULL).}
 
 \item{.max_tokens}{The maximum number of tokens that can be generated in the response (default: 2048).}
 
@@ -61,6 +65,9 @@ deepseek_chat(
 \item{.dry_run}{If TRUE, returns the constructed request object without executing it (default: FALSE).}
 
 \item{.max_tries}{Maximum retries to perform the request (default: 3).}
+
+\item{.max_tool_rounds}{Integer specifying the maximum number of tool use iterations (default: 10).
+Set to 1 for single-round tool use, or higher for multi-turn agentic loops.}
 }
 \value{
 A new \code{LLMMessage} object containing the original messages plus the assistant's response.

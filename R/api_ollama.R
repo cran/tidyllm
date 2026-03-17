@@ -31,6 +31,30 @@ method(to_api_format, list(LLMMessage, api_ollama)) <- function(.llm,
   })
 }
 
+#' Format messages for Ollama tool calling API
+#'
+#' Converts assistant tool_calls messages and tool result messages
+#' into the format expected by the Ollama API.
+#'
+#' @noRd
+format_ollama_tool_messages <- function(.assistant_message, .tool_results) {
+  assistant_msg <- list(
+    role = "assistant",
+    content = .assistant_message$content %||% "",
+    tool_calls = .assistant_message$tool_calls
+  )
+  
+  tool_msgs <- purrr::map(.tool_results, function(result) {
+    list(
+      role = "tool",
+      content = result$content,
+      tool_name = result$tool_name
+    )
+  })
+  
+  c(list(assistant_msg), tool_msgs)
+}
+
 #' A function to get metadata from Ollama responses
 #'
 #' @noRd
@@ -117,7 +141,7 @@ method(parse_chat_response, list(api_ollama,class_list)) <- function(.api,.conte
   if("error" %in% names(.content)){
     sprintf("%s returned an Error:\nMessage: %s",
             api_label,
-            .content$error$type) |>
+            .content$error) |>
       stop()
   }
   
@@ -131,19 +155,14 @@ method(parse_chat_response, list(api_ollama,class_list)) <- function(.api,.conte
 #' @noRd
 method(run_tool_calls, list(api_ollama, class_list, class_list)) <- function(.api, .tool_calls, .tools) {
 
-  # Iterate over tool calls
   tool_results <- purrr::map(.tool_calls, function(tool_call) {
     tool_name <- tool_call$`function`$name
     tool_args <- tool_call$`function`$arguments
-    tool_call_id <- tool_call$id
     
-
     if (is.null(tool_args)) {
-      warning(sprintf("Failed to parse arguments for tool: %s", tool_name))
-      return(NULL)
+      tool_args <- list()
     }
     
-    # Find the corresponding tool
     matching_tool <- purrr::keep(.tools, ~ .x@name == tool_name)
     
     if (length(matching_tool) == 0) {
@@ -151,37 +170,50 @@ method(run_tool_calls, list(api_ollama, class_list, class_list)) <- function(.ap
       return(NULL)
     }
     
-    tool_function <-  matching_tool[[1]]@func
+    tool_function <- matching_tool[[1]]@func
     
-    # Execute the function with extracted arguments
-    tool_result <- utils::capture.output(
-                      do.call(tool_function, as.list(tool_args))
-                                         ,file = NULL) |> 
-                  stringr::str_c(collapse = "\n")
+    tool_result <- tryCatch({
+      result <- do.call(tool_function, as.list(tool_args))
+      if (is.character(result)) {
+        result
+      } else {
+        jsonlite::toJSON(result, auto_unbox = TRUE)
+      }
+    }, error = function(e) {
+      paste("Error executing tool:", e$message)
+    })
     
-    # Format the response for OpenAI
     list(
-      role = "tool",
-      tool_call_id = tool_call_id,
-      name = tool_name,
-      content = tool_result
+      tool_name = tool_name,
+      content = as.character(tool_result)
     )
   })
   
-  # Remove NULL results (failed tool executions)
-  tool_results <- purrr::compact(tool_results)
-  list(list(role="assistant",
-            content=" ",
-            tool_calls=tool_calls)) |> 
-    c(tool_results)
+  purrr::compact(tool_results)
 }
+
+method(has_tool_calls, list(api_ollama, class_any)) <- function(.api, .response) {
+  !is.null(.response$raw$content$message$tool_calls) &&
+    length(.response$raw$content$message$tool_calls) > 0
+}
+
+method(extract_tool_calls, list(api_ollama, class_any)) <- function(.api, .response)
+  .response$raw$content$message$tool_calls
+
+method(append_tool_messages, list(api_ollama, class_any, class_any, class_any)) <-
+  function(.api, .request_body, .response, .tool_results) {
+    assistant_message <- .response$raw$content$message
+    tool_messages <- format_ollama_tool_messages(assistant_message, .tool_results)
+    .request_body$messages <- .request_body$messages |> append(tool_messages)
+    .request_body
+  }
 
 
 #' Interact with local AI models via the Ollama API
 #'
 #'
 #' @param .llm An LLMMessage object containing the conversation history and system prompt.
-#' @param .model Character string specifying the Ollama model to use (default: "gemma2")
+#' @param .model Character string specifying the Ollama model to use (default: "qwen3-vl")
 #' @param .stream Logical; whether to stream the response (default: FALSE)
 #' @param .seed Integer; seed for reproducible generation (default: NULL)
 #' @param .json_schema A JSON schema object as R list to enforce the output structure (default: NULL)
@@ -197,8 +229,11 @@ method(run_tool_calls, list(api_ollama, class_list, class_list)) <- function(.ap
 #' @param .repeat_last_n Integer; tokens to look back for repetition (default: NULL)
 #' @param .repeat_penalty Float; penalty for repeated tokens (default: NULL)
 #' @param .tools Either a single TOOL object or a list of TOOL objects representing the available functions for tool calls.
+#' @param .max_tool_rounds Integer; maximum number of tool use iterations for multi-turn tool calling (default: 10).
+#'   Set to 1 for single-round tool use, or higher for multi-turn agentic loops.
 #' @param .tfs_z Float; tail free sampling parameter (default: NULL)
 #' @param .stop Character; custom stop sequence(s) (default: NULL)
+#' @param .think Logical or character; controls thinking mode for supported models like Qwen3. Use FALSE to disable, TRUE to enable, or "high"/"medium"/"low" to set effort level (default: NULL - model default)
 #' @param .keep_alive Character; How long should the ollama model be kept in memory after request (default: NULL - 5 Minutes)
 #' @param .ollama_server String; Ollama API endpoint (default: "http://localhost:11434")
 #' @param .timeout Integer; API request timeout in seconds (default: 120)
@@ -231,7 +266,7 @@ method(run_tool_calls, list(api_ollama, class_list, class_list)) <- function(.ap
 #'
 #' @export
 ollama_chat <- function(.llm,
-                   .model = "gemma2",
+                   .model = "qwen3.5:4b",
                    .stream = FALSE,
                    .seed = NULL,
                    .json_schema = NULL,
@@ -247,8 +282,10 @@ ollama_chat <- function(.llm,
                    .repeat_last_n = NULL,
                    .repeat_penalty = NULL,
                    .tools = NULL,
+                   .max_tool_rounds = 10,
                    .tfs_z = NULL,
                    .stop = NULL,
+                   .think = NULL,
                    .ollama_server = "http://localhost:11434",
                    .timeout = 120,
                    .keep_alive = NULL,
@@ -277,11 +314,13 @@ ollama_chat <- function(.llm,
     "Input .timeout must be a positive integer (seconds)" = is_integer_valued(.timeout) && .timeout > 0,
     "Input .keep_alive must be character" =  is.null(.keep_alive) ||  is.character(.keep_alive),
     "Input .tools must be NULL, a TOOL object, or a list of TOOL objects" = is.null(.tools) || S7_inherits(.tools, TOOL) || (is.list(.tools) && all(purrr::map_lgl(.tools, ~ S7_inherits(.x, TOOL)))),
+    "Input .think must be logical or one of 'high', 'medium', 'low' if provided" = is.null(.think) || is.logical(.think) || (.think %in% c("high", "medium", "low")),
     "Input .dry_run must be logical" = is.logical(.dry_run),
-    "Streaming is not supported for requests with tool calls" = is.null(.tools) || !isTRUE(.stream)
+    "Streaming is not supported for requests with tool calls" = is.null(.tools) || !isTRUE(.stream),
+    ".max_tool_rounds must be a positive integer" = is_integer_valued(.max_tool_rounds) && .max_tool_rounds >= 1
   ) |>
     validate_inputs()
-  
+
   api_obj <- api_ollama(short_name = "ollama",long_name = "Ollama")
   # Get formatted message list for ollama models
   ollama_messages <-  to_api_format(.llm,api_obj)
@@ -327,6 +366,7 @@ ollama_chat <- function(.llm,
     messages = ollama_messages,
     options = ollama_options,
     stream = .stream,
+    think = .think,
     format = .json_schema,
     tools = if(!is.null(tools_def)) tools_to_api(api_obj,tools_def) else NULL
   )  |> purrr::compact()
@@ -347,20 +387,19 @@ ollama_chat <- function(.llm,
   }
   
   # Perform the API request
-  response <- perform_chat_request(request,api_obj,.stream,.timeout,3)
-  if(r_has_name(response$raw,"tool_calls")){
-    #Tool call logic can go here!
-    tool_messages <- run_tool_calls(api_obj,
-                                    response$raw$content$message$tool_calls,
-                                    tools_def)
-    ##Append the tool call to API
-    ollama_request_body$messages <- ollama_request_body$messages |> 
-      append(tool_messages)
-    
-    request <- request |>
-      httr2::req_body_json(data = ollama_request_body)
-    
-    response <- perform_chat_request(request,api_obj,.stream,.timeout,3)
+  response <- perform_chat_request(request, api_obj, .stream, .timeout, 3)
+  
+  if (.stream == FALSE && !is.null(tools_def)) {
+    response <- process_tool_loop(
+      .api = api_obj,
+      .response = response,
+      .tools_def = tools_def,
+      .request_body = ollama_request_body,
+      .request = request,
+      .timeout = .timeout,
+      .max_tries = 3,
+      .max_tool_rounds = .max_tool_rounds
+    )
   }
   
   add_message(.llm     = .llm,
@@ -382,7 +421,7 @@ ollama_chat <- function(.llm,
 #' @return A matrix where each column corresponds to the embedding of a message in the message history.
 #' @export
 ollama_embedding <- function(.input,
-                             .model = "all-minilm",
+                             .model = "qwen3-embedding:0.6b",
                              .truncate = TRUE,
                              .ollama_server = "http://localhost:11434",
                              .timeout = 120,
@@ -442,7 +481,7 @@ ollama_embedding <- function(.input,
 #' requests quicker than many individual chat requests.
 #'
 #' @param .llms A list of LLMMessage objects containing conversation histories.
-#' @param .model Character string specifying the Ollama model to use (default: "gemma2")
+#' @param .model Character string specifying the Ollama model to use (default: "qwen3-vl")
 #' @param .stream Logical; whether to stream the response (default: FALSE)
 #' @param .seed Integer; seed for reproducible generation (default: NULL)
 #' @param .json_schema A JSON schema object as R list to enforce the output structure (default: NULL)
@@ -476,7 +515,7 @@ ollama_embedding <- function(.input,
 #'
 #' @export
 send_ollama_batch <- function(.llms,
-                        .model = "gemma2",
+                        .model = "qwen3.5:4b",
                         .stream = FALSE,
                         .seed = NULL,
                         .json_schema = NULL,
@@ -656,7 +695,6 @@ ollama_list_models <- function(.ollama_server = "http://localhost:11434") {
 #' @return NULL
 #' @export
 ollama_download_model <- function(.model, .ollama_server = "http://localhost:11434") {
-  
   # Initialize a progress bar
   progress_bar <- cli::cli_progress_bar(auto_terminate = FALSE, type = "download")
   

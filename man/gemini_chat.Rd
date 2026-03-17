@@ -19,11 +19,13 @@ gemini_chat(
   .safety_settings = NULL,
   .json_schema = NULL,
   .tools = NULL,
+  .thinking_budget = NULL,
   .timeout = 120,
   .dry_run = FALSE,
   .max_tries = 3,
   .verbose = FALSE,
-  .stream = FALSE
+  .stream = FALSE,
+  .max_tool_rounds = 10
 )
 }
 \arguments{
@@ -57,6 +59,8 @@ before answering.  (default: NULL).}
 
 \item{.tools}{Either a single TOOL object or a list of TOOL objects representing the available functions for tool calls.}
 
+\item{.thinking_budget}{Token budget for internal reasoning (default: NULL). Works with \code{gemini-2.5-flash} and \code{gemini-2.5-pro}.}
+
 \item{.timeout}{When should our connection time out (default: 120 seconds).}
 
 \item{.dry_run}{If TRUE, perform a dry run and return the request object.}
@@ -66,6 +70,9 @@ before answering.  (default: NULL).}
 \item{.verbose}{Should additional information be shown after the API call.}
 
 \item{.stream}{Should the response be streamed (default: FALSE).}
+
+\item{.max_tool_rounds}{Integer specifying the maximum number of tool use iterations (default: 10).
+Set to 1 for single-round tool use, or higher for multi-turn agentic loops.}
 }
 \value{
 A new \code{LLMMessage} object containing the original messages plus the assistant's response.

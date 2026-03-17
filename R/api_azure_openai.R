@@ -87,6 +87,7 @@ method(parse_chat_response, list(api_azure_openai,class_list)) <- function(.api,
 #' @param .top_logprobs If specified, get the top N log probabilities of each output token (0-5, default: NULL).
 #' @param .tools Either a single TOOL object or a list of TOOL objects representing the available functions for tool calls.
 #' @param .tool_choice A character string specifying the tool-calling behavior; valid values are "none", "auto", or "required".
+#' @param .max_tool_rounds Integer specifying the maximum number of tool use iterations (default: 10).
 #'
 #' @return A new `LLMMessage` object containing the original messages plus the assistant's response.
 #' @export
@@ -113,7 +114,8 @@ azure_openai_chat <- function(
     .logprobs = NULL,       
     .top_logprobs = NULL,
     .tools = NULL,
-    .tool_choice = NULL
+    .tool_choice = NULL,
+    .max_tool_rounds = 10
 ) {
   #Check endpoint
   if (.endpoint_url == "" && .dry_run == FALSE) {
@@ -220,18 +222,17 @@ azure_openai_chat <- function(
   # Perform the request
   response <- perform_chat_request(request, api_obj, .stream, .timeout, .max_tries)
   
-  # Handle tool calls if any
-  if (r_has_name(response$raw, "tool_calls")) {
-    tool_messages <- run_tool_calls(api_obj,
-                                    response$raw$content$choices[[1]]$message$tool_calls,
-                                    tools_def)
-    
-    # Append the tool call to API
-    request_body$messages <- request_body$messages |> append(tool_messages)
-    
-    # Update the request and perform it again
-    request <- request |> httr2::req_body_json(data = request_body)
-    response <- perform_chat_request(request, api_obj, .stream, .timeout, .max_tries)
+  if (.stream == FALSE && !is.null(tools_def)) {
+    response <- process_tool_loop(
+      .api = api_obj,
+      .response = response,
+      .tools_def = tools_def,
+      .request_body = request_body,
+      .request = request,
+      .timeout = .timeout,
+      .max_tries = .max_tries,
+      .max_tool_rounds = .max_tool_rounds
+    )
   }
   
   # Extract assistant reply
@@ -618,8 +619,8 @@ check_azure_openai_batch <- function(.llms = NULL,
   result_tbl <- tibble::tibble(
     batch_id = response_body$id,
     status = response_body$status,
-    created_at = lubridate::as_datetime(response_body$created_at),
-    expires_at = lubridate::as_datetime(response_body$expires_at),
+    created_at = lubridate::as_datetime(if(is.null(response_body$created_at)) NA_real_ else response_body$created_at),
+    expires_at = lubridate::as_datetime(if(is.null(response_body$expires_at)) NA_real_ else response_body$expires_at),
     total_requests = response_body$request_counts$total,
     completed_requests = response_body$request_counts$completed,
     failed_requests = response_body$request_counts$failed
@@ -679,8 +680,8 @@ list_azure_openai_batches <- function(.endpoint_url = Sys.getenv('AZURE_ENDPOINT
   batch_tibble <- purrr::map_dfr(batch_data, ~ tibble::tibble(
     batch_id = .x$id,
     status = .x$status,
-    created_at = as.POSIXct(.x$created_at, origin = "1970-01-01", tz = "UTC"),
-    expires_at = as.POSIXct(.x$expires_at, origin = "1970-01-01", tz = "UTC"),
+    created_at = lubridate::as_datetime(if(is.null(response_body$created_at)) NA_real_ else response_body$created_at),
+    expires_at = lubridate::as_datetime(if(is.null(response_body$expires_at)) NA_real_ else response_body$expires_at),
     request_total = .x$request_counts$total,
     request_completed = .x$request_counts$completed,
     request_failed = .x$request_counts$failed

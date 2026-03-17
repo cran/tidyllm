@@ -88,12 +88,12 @@ method(extract_metadata, list(api_claude,class_list))<- function(.api,.response)
     total_tokens      = .response$usage$input_tokens + .response$usage$output_tokens,
     stream            = FALSE,
     specific_metadata = list(
-      stop_reason    = .response$stop_reason,
-      id             = .response$id,
-      stop_sequence  = .response$stop_sequence,
-      thinking       = if(r_has_name(.response,"thinking")) .response$content[[1]]$thinking else NULL,
-      signature      = if(r_has_name(.response,"thinking")) .response$content[[1]]$signature else NULL
-    ) 
+      stop_reason        = .response$stop_reason,
+      id                 = .response$id,
+      stop_sequence      = .response$stop_sequence,
+      thinking           = if(r_has_name(.response,"thinking")) .response$content[[1]]$thinking else NULL,
+      signature          = if(r_has_name(.response,"thinking")) .response$content[[1]]$signature else NULL
+    )
   )
 }  
 
@@ -123,22 +123,35 @@ method(extract_metadata_stream, list(api_claude,class_list))<- function(.api,.st
 #Claude-specific method to format tool calls for the API
 method(tools_to_api, list(api_claude, class_list)) <- function(.api, .tools) {
   purrr::map(.tools, function(tool) {
-    list(
-      name = tool@name,
-      description = tool@description,
-      input_schema = list(
-        type = "object",
-        properties = purrr::map(tool@input_schema, function(param) {
-          list(
-            type = param@type,
-            description = param@description
-          )
-        }),
-        required = as.list(names(tool@input_schema)) # Assume all are required
+    if (length(tool@builtin) > 0) {
+      tool@builtin[[1]]
+    } else {
+      list(
+        name = tool@name,
+        description = tool@description,
+        input_schema = list(
+          type = "object",
+          properties = purrr::map(tool@input_schema, field_to_param_schema),
+          required = as.list(names(tool@input_schema))
+        )
       )
-    )
+    }
   })
 }
+
+method(has_tool_calls, list(api_claude, class_any)) <- function(.api, .response)
+  isTRUE(.response$raw$content$stop_reason == "tool_use")
+
+method(extract_tool_calls, list(api_claude, class_any)) <- function(.api, .response)
+  purrr::keep(.response$raw$content$content, ~ .x$type == "tool_use")
+
+method(append_tool_messages, list(api_claude, class_any, class_any, class_any)) <-
+  function(.api, .request_body, .response, .tool_results) {
+    .request_body$messages <- .request_body$messages |>
+      append(list(list(role = "assistant", content = .response$raw$content$content))) |>
+      append(list(.tool_results))
+    .request_body
+  }
 
 #' A method to run tool calls on Claude and create the expected response
 #'
@@ -234,37 +247,24 @@ method(handle_stream,list(api_claude,new_S3_class("httr2_response"))) <- functio
   )
 }
 
-#' A small helper function to handle schemata or tool requests in claude
+
+
+
+#' Collapse Claude content blocks into a single character string
 #'
 #' @noRd
-claude_process_tools<- function(.api,
-                                .response,
-                                .tools_def,
-                                .request_body,
-                                .request,
-                                .timeout,
-                                .max_tries){
-    if(.response$raw$content$stop_reason == "tool_use"){
-      
-      tool_calls <- .response$raw$content$content |>
-        purrr::keep(~{.x$type=="tool_use"})
-      
-      #Tool call logic can go here!
-      tool_messages <- run_tool_calls(.api,
-                                      tool_calls,
-                                      .tools_def)
-      ##Append the tool call to API
-      .request_body$messages <- .request_body$messages |> 
-        append(list(list(role="assistant", content = .response$raw$content$content))) |>
-        append(list(tool_messages))
-      
-      .request <- .request |>
-        httr2::req_body_json(data = .request_body)
-      
-      response <- perform_chat_request(.request,.api,FALSE,.timeout,.max_tries)
-      return(response)
-    }
- return(.response)
+collapse_claude_blocks <- function(blocks) {
+  if (is.null(blocks)) {
+    return("")
+  }
+  
+  txt <- purrr::map_chr(blocks, function(b) {
+    if (!is.list(b) || is.null(b$type)) return("")
+    if (b$type == "text") return(b$text)
+    ""
+  })
+  
+  paste(txt[nzchar(txt)], collapse = "")
 }
 
 
@@ -322,7 +322,7 @@ claude_inject_files <- function(.claude_messages, .file_ids) {
 #' Interact with Claude AI models via the Anthropic API
 #'
 #' @param .llm An LLMMessage object containing the conversation history and system prompt.
-#' @param .model Character string specifying the Claude model version (default: "claude-3-5-sonnet-20241022").
+#' @param .model Character string specifying the Claude model version (default: "claude-sonnet-4-6").
 #' @param .max_tokens Integer specifying the maximum number of tokens in the response (default: 1024).
 #' @param .temperature Numeric between 0 and 1 controlling response randomness.
 #' @param .top_k Integer controlling diversity by limiting the top K tokens.
@@ -340,6 +340,8 @@ claude_inject_files <- function(.claude_messages, .file_ids) {
 #' @param .file_ids Character; A vector of file IDs for files that were uploaded to Anthropics Servers
 #' @param .thinking Logical; if TRUE, enables Claude's thinking mode for complex reasoning tasks (default: FALSE).
 #' @param .thinking_budget Integer specifying the maximum tokens Claude can spend on thinking (default: 1024). Must be at least 1024.
+#' @param .max_tool_rounds Integer specifying the maximum number of tool use iterations (default: 10). 
+#'   Set to 1 for single-round tool use, or higher for multi-turn agentic loops.
 #'
 #' @return A new LLMMessage object containing the original messages plus Claude's response.
 #' @examples
@@ -356,7 +358,7 @@ claude_inject_files <- function(.claude_messages, .file_ids) {
 #'
 #' @export
 claude_chat <- function(.llm,
-                        .model = "claude-sonnet-4-20250514",
+                        .model = "claude-sonnet-4-6",
                         .max_tokens = 2048,
                         .temperature = NULL,
                         .top_k = NULL,
@@ -373,8 +375,8 @@ claude_chat <- function(.llm,
                         .stream = FALSE,
                         .dry_run = FALSE,
                         .thinking = FALSE,
-                        .thinking_budget = 1024) {  
-
+                        .thinking_budget = 1024,
+                        .max_tool_rounds = 10) {  
   # Validate inputs to the Claude function
   c(
     ".llm must be an LLMMessage object" = S7_inherits(.llm, LLMMessage),
@@ -396,31 +398,30 @@ claude_chat <- function(.llm,
     ".max_tries must be integer-valued numeric" = is_integer_valued(.max_tries),
     ".dry_run must be logical" = is.logical(.dry_run),
     "Streaming is not supported for requests with tool calls" = is.null(.tools) || !isTRUE(.stream),
-    "For claude, .json_schema is implement a tool use. Only one can be used at a time" = is.null(.tools) || is.null(.json_schema),
     ".json_schema must be NULL or a list or an ellmer type object" = is.null(.json_schema) | is.list(.json_schema) | is_ellmer_type(.json_schema),
     "Streaming is not supported for requests with structured outputs" = is.null(.json_schema) || !isTRUE(.stream),
     ".thinking must be logical" = is.logical(.thinking),
     ".thinking_budget must be a positive integer larger than 1024" = is_integer_valued(.thinking_budget) && .thinking_budget >= 1024,
-    ".file_ids must be a character vector" = 
-      is.null(.file_ids) | is.character(.file_ids)
+    ".file_ids must be a character vector" =
+      is.null(.file_ids) | is.character(.file_ids),
+    ".max_tool_rounds must be a positive integer" = is_integer_valued(.max_tool_rounds) && .max_tool_rounds >= 1
   ) |>
     validate_inputs()
   
   json <- FALSE
-  tools_def_schema <- NULL
+  output_format <- NULL
   if(!is.null(.json_schema)){
     json <- TRUE
     if (requireNamespace("ellmer", quietly = TRUE)) {
-      #Handle ellmer json schemata Objects
       if(S7_inherits(.json_schema,ellmer::TypeObject)){
         .json_schema = to_schema(.json_schema)
       }
     }
-    tools_def_schema <- list(list(
-      name = "claude_json_extractor",
-      description = "Formulates a claude answer in a prespecified schema",
-      input_schema = .json_schema # Assume all are required
-    ))
+    .json_schema <- add_no_extra_fields(.json_schema)
+    output_format <- list(
+      type = "json_schema",
+      schema = .json_schema
+    )
   }
   
   api_obj <- api_claude(short_name = "claude",
@@ -451,17 +452,23 @@ claude_chat <- function(.llm,
     metadata = .metadata,
     stop_sequences = .stop_sequences,
     stream = .stream,
-    tools = if(!is.null(tools_def)) tools_to_api(api_obj,tools_def) else tools_def_schema,
+    tools = if(!is.null(tools_def)) tools_to_api(api_obj, tools_def) else NULL,
     thinking = if(.thinking) list(type = "enabled", budget_tokens = .thinking_budget) else NULL,
-    tool_choice =  if(!is.null(.json_schema)) list(type= "tool", name = "claude_json_extractor") else NULL
+    output_format = output_format
   ) |> purrr::compact()
+
+  # Build beta headers - combine features as needed
+  beta_features <- "files-api-2025-04-14"
+  if (!is.null(output_format)) {
+    beta_features <- paste(beta_features, "structured-outputs-2025-11-13", sep = ",")
+  }
   
   # Build request with httr2
   request <- httr2::request(.api_url) |>
     httr2::req_url_path("/v1/messages") |>
     httr2::req_headers(
       `x-api-key` = Sys.getenv("ANTHROPIC_API_KEY"),
-      `anthropic-beta` = "files-api-2025-04-14", # <--- CRUCIAL
+      `anthropic-beta` = beta_features,
       `anthropic-version` = "2023-06-01",
       `content-type` = "application/json; charset=utf-8",
       .redact = "x-api-key"
@@ -473,43 +480,44 @@ claude_chat <- function(.llm,
     return(request)  
   }
   
-  response <- perform_chat_request(request,api_obj,.stream,.timeout)
-  if(.stream == FALSE & is.null(.json_schema)){
-  response <- claude_process_tools(.api=api_obj,
-                                  .response=response,
-                                  .tools_def=tools_def,
-                                  .request_body=request_body,
-                                  .request=request,
-                                  .timeout=.timeout,
-                                  .max_tries=.max_tries)
+  response <- perform_chat_request(request, api_obj, .stream, .timeout)
+  
+  if (.stream == FALSE && !is.null(tools_def)) {
+    response <- process_tool_loop(
+      .api = api_obj,
+      .response = response,
+      .tools_def = tools_def,
+      .request_body = request_body,
+      .request = request,
+      .timeout = .timeout,
+      .max_tries = .max_tries,
+      .max_tool_rounds = .max_tool_rounds
+    )
   }
   
-  #Build the assistant reply for structured outputs
-  if(!is.null(.json_schema)){
-    #Write the assistant reply as json to be consistent with the output from other APIs
-    assistant_reply <-  response$raw$content$content[[1]]$input |> 
-      jsonlite::toJSON(auto_unbox = TRUE,pretty = TRUE)
+  assistant_reply <- if (.stream) {
+    response$assistant_reply
   } else {
-    assistant_reply <- response$assistant_reply
+    collapse_claude_blocks(response$raw$content$content)
   }
-    
-  # Extract the assistant reply and headers from response
-  track_rate_limit(api_obj,response$headers,.verbose)
   
-  # Return the updated LLMMessage object
-  add_message(.llm     = .llm, 
-              .role    = "assistant", 
-              .content = assistant_reply, 
-              .json    = json,
-              .meta    = response$meta)
-}
+  track_rate_limit(api_obj, response$headers, .verbose)
+  
+  add_message(
+    .llm     = .llm,
+    .role    = "assistant",
+    .content = assistant_reply,
+    .json    = json,
+    .meta    = response$meta
+  )
+}  
 
 #' Send a Batch of Messages to Claude API
 #'
 #' This function creates and submits a batch of messages to the Claude API for asynchronous processing.
 #'
 #' @param .llms A list of LLMMessage objects containing conversation histories.
-#' @param .model Character string specifying the Claude model version (default: "claude-3-5-sonnet-20241022").
+#' @param .model Character string specifying the Claude model version (default: "claude-sonnet-4-6").
 #' @param .max_tokens Integer specifying the maximum tokens per response (default: 1024).
 #' @param .temperature Numeric between 0 and 1 controlling response randomness.
 #' @param .top_k Integer for diversity by limiting the top K tokens.
@@ -531,7 +539,7 @@ claude_chat <- function(.llm,
 #' @return An updated and named list of `.llms` with identifiers that align with batch responses, including a `batch_id` attribute.
 #' @export
 send_claude_batch <- function(.llms, 
-                              .model = "claude-3-5-sonnet-20241022", 
+                              .model = "claude-sonnet-4-6", 
                               .max_tokens = 1024, 
                               .temperature = NULL, 
                               .top_k = NULL, 
@@ -579,25 +587,23 @@ send_claude_batch <- function(.llms,
                                            .overwrite = .overwrite)
   
   json <- FALSE
+  output_format <- NULL
   if(!is.null(.json_schema)){
     json <- TRUE
     if (requireNamespace("ellmer", quietly = TRUE)) {
-      #Handle ellmer json schemata Objects
       if(S7_inherits(.json_schema,ellmer::TypeObject)){
         .json_schema = to_schema(.json_schema)
       }
     }
-    tools_def_schema <- list(list(
-      name = "claude_json_extractor",
-      description = "Formulates a claude answer in a prespecified schema",
-      input_schema = .json_schema # Assume all are required
-    ))
+    .json_schema <- add_no_extra_fields(.json_schema)
+    output_format <- list(
+      type = "json_schema",
+      schema = .json_schema
+    )
   }
   
   requests_list <- lapply(seq_along(prepared_llms), function(i) { 
-    
-    # Get messages from each LLMMessage object
-    messages <- to_api_format(.llms[[i]],api_obj)
+    messages <- to_api_format(.llms[[i]], api_obj)
     
     custom_id <- names(prepared_llms)[i]
     list(
@@ -612,19 +618,22 @@ send_claude_batch <- function(.llms,
         system = .llms[[i]]@system_prompt,
         stop_sequences = .stop_sequences,
         thinking = if(.thinking) list(type = "enabled", budget_tokens = .thinking_budget) else NULL,
-        tools = if(!is.null(.json_schema)) tools_def_schema else NULL,
-        tool_choice =  if(!is.null(.json_schema)) list(type= "tool", name = "claude_json_extractor") else NULL
-        
-      ) |> purrr::compact()  # Remove NULL values
+        output_format = output_format
+      ) |> purrr::compact()
     )
   })
+  
+  beta_features <- "message-batches-2024-09-24"
+  if (!is.null(output_format)) {
+    beta_features <- paste(beta_features, "structured-outputs-2025-11-13", sep = ",")
+  }
   
   request <- httr2::request(.api_url) |>
     httr2::req_url_path("/v1/messages/batches") |>
     httr2::req_headers(
       `x-api-key` = api_key,
       `anthropic-version` = "2023-06-01",
-      `anthropic-beta` = "message-batches-2024-09-24",
+      `anthropic-beta` = beta_features,
       `content-type` = "application/json; charset=utf-8",
       .redact = "x-api-key"
     ) |>
@@ -852,18 +861,12 @@ fetch_claude_batch <- function(.llms,
     result <- results_by_custom_id[[custom_id]]
     
     if (!is.null(result) && result$result$type == "succeeded") {
-      if(json==FALSE){
-        assistant_reply <- result$result$message$content$text
-      }
-      if(json==TRUE){
-        assistant_reply <-  result$result$message$content$input |> 
-          jsonlite::toJSON(auto_unbox = TRUE,pretty = TRUE)
-      }
+      assistant_reply <- result$result$message$content$text
       llm <- add_message(.llm = .llms[[custom_id]],
                          .role = "assistant", 
                          .content = assistant_reply,
                          .json = json,
-                         .meta = extract_metadata(api_obj,result$result$message))
+                         .meta = extract_metadata(api_obj, result$result$message))
       return(llm)
     } else {
       warning(sprintf("Result for custom_id %s was unsuccessful or not found", custom_id))
@@ -1297,6 +1300,27 @@ claude_delete_file <- function(.file_id,
   invisible(NULL)
 }
 
+
+#' Builtin Claude Web Search Tool
+#'
+#' Returns a TOOL object for Claude's builtin web_search tool.
+#'
+#' @export
+claude_websearch <- function() {
+  TOOL(
+    name = "web_search",
+    description = "Builtin tool: web_search",
+    input_schema = list(),           # no input schema needed
+    func = function() NULL,          # not used for builtin tools
+    builtin = list(list(
+      name = "web_search",
+      type = "web_search_20250305"
+    ))
+  )
+}
+
+
+
 #' Provider Function for Claude models on the Anthropic API
 #'
 #' The `claude()` function acts as an interface for interacting with the Anthropic API 
@@ -1323,6 +1347,3 @@ claude <- create_provider_function(
   fetch_batch = fetch_claude_batch,
   list_models = claude_list_models
 )
-
-
-

@@ -220,6 +220,19 @@ method(run_tool_calls, list(api_openai, class_list, class_list)) <- function(.ap
 }
 
 
+method(has_tool_calls, list(api_openai, class_any)) <- function(.api, .response)
+  !is.null(.response$raw$content$choices[[1]]$message$tool_calls)
+
+method(extract_tool_calls, list(api_openai, class_any)) <- function(.api, .response)
+  .response$raw$content$choices[[1]]$message$tool_calls
+
+method(append_tool_messages, list(api_openai, class_any, class_any, class_any)) <-
+  function(.api, .request_body, .response, .tool_results) {
+    .request_body$messages <- .request_body$messages |> append(.tool_results)
+    .request_body
+  }
+
+
 #' A method to handle streaming requests
 #' request
 #'
@@ -381,7 +394,7 @@ prepare_openai_request <- function(
 #' This function sends a message history to the OpenAI Chat Completions API and returns the assistant's reply.
 #'
 #' @param .llm An `LLMMessage` object containing the conversation history.
-#' @param .model The identifier of the model to use (default: "gpt-4o").
+#' @param .model The identifier of the model to use (default: "gpt-5.1-chat-latest").
 #' @param .max_completion_tokens An upper bound for the number of tokens that can be generated for a completion.
 #' @param .frequency_penalty Number between -2.0 and 2.0. Positive values penalize new tokens based on their existing frequency.
 #' @param .logit_bias A named list modifying the likelihood of specified tokens appearing in the completion.
@@ -404,13 +417,15 @@ prepare_openai_request <- function(
 #' @param .top_logprobs If specified, get the top N log probabilities of each output token (0-5, default: NULL).
 #' @param .tools Either a single TOOL object or a list of TOOL objects representing the available functions for tool calls.
 #' @param .tool_choice A character string specifying the tool-calling behavior; valid values are "none", "auto", or "required".
+#' @param .max_tool_rounds Integer specifying the maximum number of tool use iterations (default: 10). 
+#'   Set to 1 for single-round tool use, or higher for multi-turn agentic loops.
 #'
 #' @return A new `LLMMessage` object containing the original messages plus the assistant's response.
 #'
 #' @export
 openai_chat <- function(
     .llm,
-    .model = "gpt-4.1",
+    .model = "gpt-5.1-chat-latest",
     .max_completion_tokens = NULL,
     .reasoning_effort = NULL,
     .frequency_penalty = NULL,
@@ -432,7 +447,8 @@ openai_chat <- function(
     .logprobs = NULL,       
     .top_logprobs = NULL,
     .tools = NULL,
-    .tool_choice = NULL
+    .tool_choice = NULL,
+    .max_tool_rounds = 10
 ) {
   # Validate inputs
   c(
@@ -460,6 +476,7 @@ openai_chat <- function(
     "Input .top_logprobs must be NULL or an integer between 0 and 5" = is.null(.top_logprobs) | (is_integer_valued(.top_logprobs) && .top_logprobs >= 0 && .top_logprobs <= 5),
     "Input .tools must be NULL, a TOOL object, or a list of TOOL objects" = is.null(.tools) || S7_inherits(.tools, TOOL) || (is.list(.tools) && all(purrr::map_lgl(.tools, ~ S7_inherits(.x, TOOL)))),
     "Input .tool_choice must be NULL or a character (one of 'none', 'auto', 'required')" = is.null(.tool_choice) || (is.character(.tool_choice) && .tool_choice %in% c("none", "auto", "required")),
+    ".max_tool_rounds must be a positive integer" = is_integer_valued(.max_tool_rounds) && .max_tool_rounds >= 1,
     "Streaming is not supported for requests with tool calls" = is.null(.tools) || !isTRUE(.stream)
   ) |> validate_inputs()
   
@@ -545,18 +562,17 @@ openai_chat <- function(
   # Perform the request
   response <- perform_chat_request(request, api_obj, .stream, .timeout, .max_tries)
   
-  # Handle tool calls if any
-  if (r_has_name(response$raw, "tool_calls")) {
-    tool_messages <- run_tool_calls(api_obj,
-                                    response$raw$content$choices[[1]]$message$tool_calls,
-                                    tools_def)
-    
-    # Append the tool call to API
-    request_body$messages <- request_body$messages |> append(tool_messages)
-    
-    # Update the request and perform it again
-    request <- request |> httr2::req_body_json(data = request_body)
-    response <- perform_chat_request(request, api_obj, .stream, .timeout, .max_tries)
+  if (.stream == FALSE && !is.null(tools_def)) {
+    response <- process_tool_loop(
+      .api = api_obj,
+      .response = response,
+      .tools_def = tools_def,
+      .request_body = request_body,
+      .request = request,
+      .timeout = .timeout,
+      .max_tries = .max_tries,
+      .max_tool_rounds = .max_tool_rounds
+    )
   }
   
   # Extract assistant reply
@@ -668,7 +684,7 @@ openai_embedding <- function(.input,
 #' This function creates and submits a batch of messages to the OpenAI Batch API for asynchronous processing.
 #'
 #' @param .llms A list of LLMMessage objects containing conversation histories.
-#' @param .model Character string specifying the OpenAI model version (default: "gpt-4o").
+#' @param .model Character string specifying the OpenAI model version (default: "gpt-5.1-chat-latest").
 #' @param .max_completion_tokens Integer specifying the maximum tokens per response (default: NULL).
 #' @param .reasoning_effort How long should reasoning models reason (can either be "low","medium" or "high")
 #' @param .frequency_penalty Number between -2.0 and 2.0. Positive values penalize new tokens based on their existing frequency in the text so far.
@@ -691,7 +707,7 @@ openai_embedding <- function(.input,
 #' @return An updated and named list of `.llms` with identifiers that align with batch responses, including a `batch_id` attribute.
 #' @export
 send_openai_batch <- function(.llms,
-                              .model = "gpt-4.1",
+                              .model = "gpt-5.4",
                               .max_completion_tokens = NULL,
                               .reasoning_effort = NULL,
                               .frequency_penalty = NULL,
@@ -1327,11 +1343,8 @@ openai <- create_provider_function(
 #'   `chat`, `embed`, `send_batch`) in which the function is being 
 #'   invoked. This is automatically managed and should not be modified by the user.
 #'
-#' @return The result of the requested action, depending on the specific function invoked 
+#' @return The result of the requested action, depending on the specific function invoked
 #'   (e.g., an updated `LLMMessage` object for `chat()`, or a matrix for `embed()`).
-#' 
+#' @keywords internal
 #' @export
 chatgpt <- openai
-
-
-

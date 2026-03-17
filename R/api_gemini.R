@@ -121,10 +121,11 @@ method(extract_metadata, list(api_gemini,class_list))<- function(.api,.response)
     completion_tokens = .response$usageMetadata$candidatesTokenCount,
     total_tokens      = .response$usageMetadata$totalTokenCount,
     specific_metadata = list(
-      finishReason = .response$candidates[[1]]$finishReason,
-      avgLogprobs  = .response$candidates[[1]]$avgLogprobs,
-      groundingMetadata = .response$candidates[[1]]$groundingMetadata
-      ) 
+      finishReason      = .response$candidates[[1]]$finishReason,
+      avgLogprobs       = .response$candidates[[1]]$avgLogprobs,
+      groundingMetadata = .response$candidates[[1]]$groundingMetadata,
+      thinking_tokens   = .response$usageMetadata$thoughtsTokenCount
+    )
   )
 }  
 
@@ -156,26 +157,52 @@ method(extract_metadata_stream, list(api_gemini,class_list))<- function(.api,.st
 method(tools_to_api, list(api_gemini, class_list)) <- function(.api, .tools) {
   list(
     function_declarations = purrr::map(.tools, function(tool) {
-      tool_def <- list(
-        name = tool@name,
-        description = tool@description
-      )
-      if (length(tool@input_schema) > 0) {
-        tool_def$parameters <- list(
-          type = "object",
-          properties = purrr::map(tool@input_schema, function(param) {
-            list(
-              type = param@type,
-              description = param@description
-            )
-          }),
-          required = names(tool@input_schema)
+      if (length(tool@builtin) > 0) {
+        tool@builtin[[1]]
+      } else {
+        tool_def <- list(
+          name = tool@name,
+          description = tool@description
         )
+        if (length(tool@input_schema) > 0) {
+          tool_def$parameters <- list(
+            type = "object",
+            properties = purrr::map(tool@input_schema, field_to_param_schema),
+            required = names(tool@input_schema)
+          )
+        }
+        tool_def
       }
-      tool_def
     })
   )
 }
+
+method(has_tool_calls, list(api_gemini, class_any)) <- function(.api, .response) {
+  parts <- .response$raw$content$candidates[[1]]$content$parts
+  if (is.null(parts)) return(FALSE)
+  any(purrr::map_lgl(parts, ~!is.null(.x$functionCall)))
+}
+
+method(extract_tool_calls, list(api_gemini, class_any)) <- function(.api, .response) {
+  parts <- .response$raw$content$candidates[[1]]$content$parts
+  purrr::keep(parts, ~!is.null(.x$functionCall)) |>
+    purrr::map(~.x$functionCall)
+}
+
+method(append_tool_messages, list(api_gemini, class_any, class_any, class_any)) <-
+  function(.api, .request_body, .response, .tool_results) {
+    tool_calls <- extract_tool_calls(.api, .response)
+    assistant_message <- list(
+      role = "model",
+      parts = purrr::map(tool_calls, ~list(functionCall = .x))
+    )
+    .request_body$contents <- c(
+      .request_body$contents,
+      list(assistant_message),
+      list(.tool_results)
+    )
+    .request_body
+  }
 
 #' A method to run tool calls on Gemini and create the expected response
 #'
@@ -224,6 +251,9 @@ method(run_tool_calls, list(api_gemini, class_list, class_list)) <- function(.ap
     parts = tool_parts
   )
 }
+
+
+
 
 
 #' Inject files into Gemini message contents
@@ -305,6 +335,9 @@ gemini_inject_files <- function(.gemini_contents,
 #' @param .max_tries Maximum retries to perform request (default: 3).
 #' @param .verbose Should additional information be shown after the API call.
 #' @param .stream Should the response be streamed (default: FALSE).
+#' @param .max_tool_rounds Integer specifying the maximum number of tool use iterations (default: 10).
+#'   Set to 1 for single-round tool use, or higher for multi-turn agentic loops.
+#' @param .thinking_budget Token budget for internal reasoning (default: NULL). Works with `gemini-2.5-flash` and `gemini-2.5-pro`.
 #'
 #' @return A new `LLMMessage` object containing the original messages plus the assistant's response.
 #'
@@ -316,18 +349,20 @@ gemini_chat <- function(.llm,
                    .max_output_tokens = NULL,
                    .top_p = NULL,
                    .top_k = NULL,
-                   .grounding_threshold = NULL, 
+                   .grounding_threshold = NULL,
                    .presence_penalty = NULL,
                    .frequency_penalty = NULL,
                    .stop_sequences = NULL,
                    .safety_settings = NULL,
                    .json_schema = NULL,
                    .tools = NULL,
+                   .thinking_budget = NULL,
                    .timeout = 120,
                    .dry_run = FALSE,
                    .max_tries = 3,
                    .verbose = FALSE,
-                   .stream = FALSE) {
+                   .stream = FALSE,
+                   .max_tool_rounds = 10) {
 
   # Validate inputs
   c(
@@ -350,7 +385,9 @@ gemini_chat <- function(.llm,
     "Input .verbose must be logical" = is.logical(.verbose),
     "Input .stream must be logical" = is.logical(.verbose),
     "Input .tools must be NULL, a TOOL object, or a list of TOOL objects" = is.null(.tools) || S7_inherits(.tools, TOOL) || (is.list(.tools) && all(purrr::map_lgl(.tools, ~ S7_inherits(.x, TOOL)))),
-    "Streaming is not supported for requests with tool calls" = is.null(.tools) || !isTRUE(.stream)
+    "Streaming is not supported for requests with tool calls" = is.null(.tools) || !isTRUE(.stream),
+    ".max_tool_rounds must be a positive integer" = is_integer_valued(.max_tool_rounds) && .max_tool_rounds >= 1,
+    ".thinking_budget must be NULL or a non-negative integer" = is.null(.thinking_budget) || (is_integer_valued(.thinking_budget) && .thinking_budget >= 0)
   ) |>
     validate_inputs()
   
@@ -386,10 +423,14 @@ gemini_chat <- function(.llm,
   } 
   
   
-  #Put a single tool into a list if only one is provided. 
-  tools_def <- if (!is.null(.tools)) {
-    .tools <- if (S7_inherits(.tools, TOOL))  list(.tools) else .tools
-    tools_to_api(api_obj,.tools) 
+  #Put a single tool into a list if only one is provided.
+  raw_tools_def <- if (!is.null(.tools)) {
+    if (S7_inherits(.tools, TOOL)) list(.tools) else .tools
+  } else {
+    NULL
+  }
+  tools_def <- if (!is.null(raw_tools_def)) {
+    tools_to_api(api_obj, raw_tools_def)
   } else {
     NULL
   }
@@ -425,7 +466,8 @@ gemini_chat <- function(.llm,
     topK = .top_k,
     presencePenalty = .presence_penalty,
     frequencyPenalty = .frequency_penalty,
-    stopSequences = .stop_sequences
+    stopSequences = .stop_sequences,
+    thinkingConfig = if (!is.null(.thinking_budget)) list(thinkingBudget = .thinking_budget) else NULL
   ) |>
     append(response_format) |>
     purrr::compact()
@@ -458,38 +500,17 @@ gemini_chat <- function(.llm,
   # Perform the API request
   response <- perform_chat_request(request,api_obj,.stream,.timeout,.max_tries)
   
-  if(.stream==FALSE) {
-    #Handle tool calls
-    if (!is.null(response$raw$content$candidates[[1]]$content$parts[[1]]$functionCall)) {
-      tool_call <- response$raw$content$candidates[[1]]$content$parts[[1]]$functionCall
-      
-      tool_messages <- run_tool_calls(api_obj, list(tool_call), .tools)
-      
-      # Create an assistant message that contains the functionCall.
-      assistant_function_call_message <- list(
-        role = "model",
-        parts = list(
-          list(
-            functionCall = tool_call
-          )
-        )
-      )
-      
-      # Append both the assistant's functionCall message and the tool response (user message)
-      # to the conversation history.
-      request_body$contents <- c(
-        request_body$contents,
-        list(assistant_function_call_message),
-        list(tool_messages)
-      )
-      
-      # Update the request with the new conversation history.
-      request <- request |>
-        httr2::req_body_json(data = request_body)
-      
-      # Resend the request to Gemini with the appended tool responses.
-      response <- perform_chat_request(request, api_obj, .stream, .timeout, .max_tries)
-    }
+  if (.stream == FALSE && !is.null(raw_tools_def)) {
+    response <- process_tool_loop(
+      .api = api_obj,
+      .response = response,
+      .tools_def = raw_tools_def,
+      .request_body = request_body,
+      .request = request,
+      .timeout = .timeout,
+      .max_tries = .max_tries,
+      .max_tool_rounds = .max_tool_rounds
+    )
   }
   
   add_message(.llm     = .llm,
@@ -669,7 +690,7 @@ gemini_delete_file <- function(.file_name) {
 #' @return A matrix where each column corresponds to the embedding of a message in the message history.
 #' @export
 gemini_embedding <- function(.input,
-                             .model = "text-embedding-004",
+                             .model = "gemini-embedding-2-preview",
                              .truncate = TRUE,
                              .timeout = 120,
                              .dry_run = FALSE,
@@ -915,6 +936,7 @@ send_gemini_batch <- function(.llms,
 }
 
 
+
 #' Check the Status of a Gemini Batch Operation
 #'
 #' Retrieves processing status and metadata for a Gemini batch operation.
@@ -1123,6 +1145,71 @@ fetch_gemini_batch <- function(.llms,
 }
 
 
+#' List Available Models from the Google Gemini API
+#'
+#' @param .timeout Request timeout in seconds (default: 60).
+#' @param .max_tries Maximum number of retries for the API request (default: 3).
+#' @param .dry_run Logical; if TRUE, returns the prepared request object without executing it.
+#'
+#' @return A tibble containing model information with columns including `name`, `base_model_id`, 
+#'   `version`, `display_name`, `description`, `input_token_limit`, `output_token_limit`, 
+#'   `supported_generation_methods`, `thinking`, `temperature`, `max_temperature`, `top_p`, and `top_k`,
+#'   or NULL if no models are found.
+#'
+#' @export
+gemini_list_models <- function(.timeout = 60,
+                               .max_tries = 3,
+                               .dry_run = FALSE) {
+  
+  api_obj <- api_gemini(short_name = "gemini",
+                        long_name  = "Google Gemini",
+                        api_key_env_var = "GOOGLE_API_KEY")
+  
+  api_key <- get_api_key(api_obj, .dry_run)
+  
+  request <- httr2::request("https://generativelanguage.googleapis.com") |>
+    httr2::req_url_path("/v1beta/models") |>
+    httr2::req_url_query(key = api_key)
+  
+  if (.dry_run) {
+    return(request)
+  }
+  
+  response <- request |>
+    httr2::req_timeout(.timeout) |>
+    httr2::req_retry(max_tries = .max_tries) |>
+    httr2::req_perform() |>
+    httr2::resp_body_json()
+  
+  if (!is.null(response$models)) {
+    models <- response$models
+    
+    model_info <- purrr::map_dfr(models, function(m) {
+      tibble::tibble(
+        name = m$name,
+        display_name = purrr::pluck(m, "displayName", .default = NA_character_),
+        version = purrr::pluck(m, "version", .default = NA_character_),
+        description = purrr::pluck(m, "description", .default = NA_character_),
+        input_token_limit = purrr::pluck(m, "inputTokenLimit", .default = NA_integer_),
+        output_token_limit = purrr::pluck(m, "outputTokenLimit", .default = NA_integer_),
+        supported_generation_methods = list(purrr::pluck(m, "supportedGenerationMethods", .default = list())),
+        thinking = purrr::pluck(m, "thinking", .default = NA),
+        temperature = purrr::pluck(m, "temperature", .default = NA_real_),
+        max_temperature = purrr::pluck(m, "maxTemperature", .default = NA_real_),
+        top_p = purrr::pluck(m, "topP", .default = NA_real_),
+        top_k = purrr::pluck(m, "topK", .default = NA_integer_)
+      )
+    })
+    
+    return(model_info)
+  } else {
+    return(NULL)
+  }
+}
+
+
+
+
 #' Google Gemini Provider Function
 #'
 #' The `gemini()` function acts as a provider interface for interacting with the Google Gemini API 
@@ -1150,5 +1237,6 @@ gemini <- create_provider_function(
   send_batch = send_gemini_batch,
   check_batch = check_gemini_batch,
   list_batches = list_gemini_batches,
-  fetch_batch = fetch_gemini_batch
+  fetch_batch = fetch_gemini_batch,
+  list_models = gemini_list_models
 )
