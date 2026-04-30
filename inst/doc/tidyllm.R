@@ -41,8 +41,9 @@ c("A famous landmark in Paris is the Eiffel Tower.")
 knitr::include_graphics("picture.jpeg")
 
 ## ----images, eval=FALSE-------------------------------------------------------
+# # Single image
 # image_description <- llm_message("Describe this picture. Can you guess where it was taken?",
-#                                   .imagefile = "picture.jpeg") |>
+#                                   .media = img("picture.jpeg")) |>
 #   chat(openai(.model = "gpt-5.4"))
 # 
 # get_reply(image_description)
@@ -50,16 +51,51 @@ knitr::include_graphics("picture.jpeg")
 ## ----images_out, eval=TRUE, echo=FALSE----------------------------------------
 c("The picture shows a beautiful landscape with a lake, mountains, and a town nestled below. The area appears lush and green, with agricultural fields visible. This scenery is reminiscent of northern Italy, particularly around Lake Garda.")
 
+## ----eval=FALSE---------------------------------------------------------------
+# llm_message("Compare these two charts.",
+#             .media = list(img("chart_a.png"), img("chart_b.png"))) |>
+#   chat(claude())
+# 
+# # Mixed types in one message
+# llm_message("Does this figure match the results described in the paper?",
+#             .media = list(img("figure.png"), pdf_file("paper.pdf", pages = 1:5))) |>
+#   chat(gemini())
+
+## ----eval=FALSE---------------------------------------------------------------
+# # Audio transcription or analysis
+# llm_message("Transcribe and summarise this recording.",
+#             .media = audio_file("interview.mp3")) |>
+#   chat(gemini())
+# 
+# # Video understanding
+# llm_message("Describe what happens in this clip.",
+#             .media = video_file("demo.mp4")) |>
+#   chat(gemini())
+
 ## ----pdf, eval=FALSE----------------------------------------------------------
 # llm_message("Summarize the key points from this document.",
-#             .pdf = "die_verwandlung.pdf") |>
-#   chat(openai(.model = "gpt-5.4"))
+#             .media = pdf_file("die_verwandlung.pdf")) |>
+#   chat(claude())
 
 ## ----pdf_out, eval=TRUE, echo=FALSE-------------------------------------------
 llm_message("Summarize the key points from this document.",
-            .pdf = "die_verwandlung.pdf") |>
+            .media = pdf_file("die_verwandlung.pdf")) |>
   llm_message("The story centres on Gregor Samsa, who wakes up transformed into a giant insect. Unable to work, he becomes isolated while his family struggles. Eventually Gregor dies, and his relieved family looks ahead to a better future.",
               .role = "assistant")
+
+## ----eval=FALSE---------------------------------------------------------------
+# pdf_file("report.pdf", pages = 1:5)
+
+## ----eval=FALSE---------------------------------------------------------------
+# report <- upload_file(claude(), .path = "annual_report.pdf")
+# 
+# llm_message("What are the key risks mentioned?", .files = report) |>
+#   chat(claude())
+# 
+# # Manage uploaded files
+# list_files(claude())
+# file_info(claude(), report)
+# delete_file(claude(), report)
 
 ## ----routputs_base, eval=TRUE, echo=TRUE, message=FALSE, fig.alt="Scatter plot of car weight (x-axis) versus miles per gallon (y-axis) from the mtcars dataset, with a fitted linear regression line showing a negative relationship between weight and fuel efficiency."----
 library(tidyverse)
