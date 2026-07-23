@@ -379,7 +379,7 @@ OPENAI_API_KEY=&quot;your-key-here&quot;</code></pre>
 <tr class="odd">
 <td><strong>Claude</strong> (Anthropic)</td>
 <td><code>ANTHROPIC_API_KEY</code></td>
-<td><a href="https://console.anthropic.com/settings/keys">Anthropic
+<td><a href="https://platform.claude.com/settings/keys">Anthropic
 Console</a></td>
 </tr>
 <tr class="even">
@@ -506,7 +506,7 @@ single media object or a list of them:</p>
 <div class="sourceCode" id="cb10"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" tabindex="-1"></a><span class="co"># Single image</span></span>
 <span id="cb10-2"><a href="#cb10-2" tabindex="-1"></a>image_description <span class="ot">&lt;-</span> <span class="fu">llm_message</span>(<span class="st">&quot;Describe this picture. Can you guess where it was taken?&quot;</span>,</span>
 <span id="cb10-3"><a href="#cb10-3" tabindex="-1"></a>                                  <span class="at">.media =</span> <span class="fu">img</span>(<span class="st">&quot;picture.jpeg&quot;</span>)) <span class="sc">|&gt;</span></span>
-<span id="cb10-4"><a href="#cb10-4" tabindex="-1"></a>  <span class="fu">chat</span>(<span class="fu">openai</span>(<span class="at">.model =</span> <span class="st">&quot;gpt-5.4&quot;</span>))</span>
+<span id="cb10-4"><a href="#cb10-4" tabindex="-1"></a>  <span class="fu">chat</span>(<span class="fu">openai</span>(<span class="at">.model =</span> <span class="st">&quot;gpt-5.6-terra&quot;</span>))</span>
 <span id="cb10-5"><a href="#cb10-5" tabindex="-1"></a></span>
 <span id="cb10-6"><a href="#cb10-6" tabindex="-1"></a><span class="fu">get_reply</span>(image_description)</span></code></pre></div>
 <pre><code>## [1] &quot;The picture shows a beautiful landscape with a lake, mountains, and a town nestled below. The area appears lush and green, with agricultural fields visible. This scenery is reminiscent of northern Italy, particularly around Lake Garda.&quot;</code></pre>
@@ -673,8 +673,8 @@ API-specific metadata for all assistant replies:</p>
 <pre><code>## # A tibble: 2 × 6
 ##   model  timestamp           prompt_tokens completion_tokens
 ##   &lt;chr&gt;  &lt;dttm&gt;                      &lt;int&gt;             &lt;int&gt;
-## 1 groq-… 2025-11-08 14:25:43            20                45
-## 2 claud… 2025-11-08 14:26:02            80                40
+## 1 groq-… 2026-07-08 14:25:43            20                45
+## 2 claud… 2026-07-08 14:26:02            80                40
 ## # ℹ 2 more variables: total_tokens &lt;int&gt;,
 ## #   api_specific &lt;list&gt;</code></pre>
 <p>The <code>api_specific</code> list column holds provider-only
@@ -1002,7 +1002,7 @@ Local Models article on the tidyllm website.</p>
 <div id="setting-a-default-provider" class="section level2">
 <h2>Setting a Default Provider</h2>
 <p>Avoid specifying a provider on every call by setting options:</p>
-<div class="sourceCode" id="cb54"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb54-1"><a href="#cb54-1" tabindex="-1"></a><span class="fu">options</span>(<span class="at">tidyllm_chat_default   =</span> <span class="fu">openai</span>(<span class="at">.model =</span> <span class="st">&quot;gpt-5.4&quot;</span>))</span>
+<div class="sourceCode" id="cb54"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb54-1"><a href="#cb54-1" tabindex="-1"></a><span class="fu">options</span>(<span class="at">tidyllm_chat_default   =</span> <span class="fu">openai</span>(<span class="at">.model =</span> <span class="st">&quot;gpt-5.6-terra&quot;</span>))</span>
 <span id="cb54-2"><a href="#cb54-2" tabindex="-1"></a><span class="fu">options</span>(<span class="at">tidyllm_embed_default  =</span> <span class="fu">ollama</span>())</span>
 <span id="cb54-3"><a href="#cb54-3" tabindex="-1"></a><span class="fu">options</span>(<span class="at">tidyllm_sbatch_default =</span> <span class="fu">claude</span>(<span class="at">.temperature =</span> <span class="dv">0</span>))</span>
 <span id="cb54-4"><a href="#cb54-4" tabindex="-1"></a><span class="fu">options</span>(<span class="at">tidyllm_cbatch_default =</span> <span class="fu">claude</span>())</span>

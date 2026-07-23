@@ -44,7 +44,7 @@ knitr::include_graphics("picture.jpeg")
 # # Single image
 # image_description <- llm_message("Describe this picture. Can you guess where it was taken?",
 #                                   .media = img("picture.jpeg")) |>
-#   chat(openai(.model = "gpt-5.4"))
+#   chat(openai(.model = "gpt-5.6-terra"))
 # 
 # get_reply(image_description)
 
@@ -144,8 +144,8 @@ conversation |> as_tibble()
 
 ## ----get_metadata_out, eval=TRUE, echo=FALSE----------------------------------
 tibble::tibble(
-  model             = c("groq-model", "claude-sonnet-4-6-20251001"),
-  timestamp         = as.POSIXct(c("2025-11-08 14:25:43", "2025-11-08 14:26:02")),
+  model             = c("groq-model", "claude-sonnet-5"),
+  timestamp         = as.POSIXct(c("2026-07-08 14:25:43", "2026-07-08 14:26:02")),
   prompt_tokens     = c(20L, 80L),
   completion_tokens = c(45L, 40L),
   total_tokens      = c(65L, 120L),
@@ -314,7 +314,7 @@ tibble::tribble(
 #   chat(claude(), .stream = TRUE)
 
 ## ----eval=FALSE---------------------------------------------------------------
-# options(tidyllm_chat_default   = openai(.model = "gpt-5.4"))
+# options(tidyllm_chat_default   = openai(.model = "gpt-5.6-terra"))
 # options(tidyllm_embed_default  = ollama())
 # options(tidyllm_sbatch_default = claude(.temperature = 0))
 # options(tidyllm_cbatch_default = claude())

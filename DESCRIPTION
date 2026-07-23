@@ -1,6 +1,6 @@
 Package: tidyllm
 Title: Tidy Integration of Large Language Models
-Version: 0.5.0
+Version: 0.5.1
 Authors@R: c(
     person("Eduard", "Brüll", NULL, "eduard.bruell@zew.de", role = c("aut", "cre")),
     person("Jia", "Zhang", NULL, NULL, role = "ctb")
@@ -29,9 +29,9 @@ Collate: 'tidyllm-package.R' 'utilites.R' 'embedding_helpers.R'
 Depends: R (>= 4.2.0)
 Config/testthat/edition: 3
 NeedsCompilation: no
-Packaged: 2026-04-29 20:30:12 UTC; ebr
+Packaged: 2026-07-23 13:50:23 UTC; ebr
 Author: Eduard Brüll [aut, cre],
   Jia Zhang [ctb]
 Maintainer: Eduard Brüll <eduard.bruell@zew.de>
 Repository: CRAN
-Date/Publication: 2026-04-30 08:30:08 UTC
+Date/Publication: 2026-07-23 14:50:02 UTC
