@@ -117,6 +117,39 @@ azure_openai_chat <- function(
     .tool_choice = NULL,
     .max_tool_rounds = 10
 ) {
+  built <- do.call(azure_openai_build_chat_request, mget(names(formals())), quote = TRUE)
+  run_chat_pipeline(built, .dry_run)
+}
+
+#' Build a Azure OpenAI chat request without performing it
+#'
+#' @noRd
+azure_openai_build_chat_request <- function(
+    .llm,
+    .endpoint_url = Sys.getenv("AZURE_ENDPOINT_URL"),
+    .deployment = "gpt-4o-mini",
+    .api_version = "2024-08-01-preview",
+    .max_completion_tokens = NULL,
+    .reasoning_effort = NULL,
+    .frequency_penalty = NULL,
+    .logit_bias = NULL,
+    .presence_penalty = NULL,
+    .seed = NULL,
+    .stop = NULL,
+    .stream = FALSE,
+    .temperature = NULL,
+    .top_p = NULL,
+    .timeout = 60,
+    .verbose = FALSE,
+    .json_schema = NULL,
+    .max_tries = 3,
+    .dry_run = FALSE,
+    .logprobs = NULL,       
+    .top_logprobs = NULL,
+    .tools = NULL,
+    .tool_choice = NULL,
+    .max_tool_rounds = 10
+) {
   #Check endpoint
   if (.endpoint_url == "" && .dry_run == FALSE) {
     stop("No valid Azure endpoint defined. Please set it either as input to this function or with: Sys.setenv(AZURE_ENDPOINT_URL = \"https://endpoint.openai.azure.com/\")")
@@ -144,8 +177,7 @@ azure_openai_chat <- function(
     "Input .logprobs must be NULL or a logical" = is.null(.logprobs) | is.logical(.logprobs),
     "Input .top_logprobs must be NULL or an integer between 0 and 5" = is.null(.top_logprobs) | (is_integer_valued(.top_logprobs) && .top_logprobs >= 0 && .top_logprobs <= 5),
     "Input .tools must be NULL, a TOOL object, or a list of TOOL objects" = is.null(.tools) || S7_inherits(.tools, TOOL) || (is.list(.tools) && all(purrr::map_lgl(.tools, ~ S7_inherits(.x, TOOL)))),
-    "Input .tool_choice must be NULL or a character (one of 'none', 'auto', 'required')" = is.null(.tool_choice) || (is.character(.tool_choice) && .tool_choice %in% c("none", "auto", "required")),
-    "Streaming is not supported for requests with tool calls" = is.null(.tools) || !isTRUE(.stream)
+    "Input .tool_choice must be NULL or a character (one of 'none', 'auto', 'required')" = is.null(.tool_choice) || (is.character(.tool_choice) && .tool_choice %in% c("none", "auto", "required"))
   ) |> validate_inputs()
   
   # Create API object
@@ -208,50 +240,22 @@ azure_openai_chat <- function(
   request <- httr2::request(.endpoint_url) |>
     httr2::req_url_path_append(paste0("openai/deployments/", .deployment, "/chat/completions")) |>
     httr2::req_url_query(`api-version` = .api_version) |>
-    httr2::req_headers(
-      `Content-Type` = "application/json",
-      `api-key` = api_key
-    ) |>
+    httr2::req_headers(`Content-Type` = "application/json") |>
+    httr2::req_headers_redacted(`api-key` = api_key) |>
     httr2::req_body_json(data = request_body)
   
-  # Return only the request object in a dry run
-  if (.dry_run) {
-    return(request)
-  }
-  
-  # Perform the request
-  response <- perform_chat_request(request, api_obj, .stream, .timeout, .max_tries)
-  
-  if (.stream == FALSE && !is.null(tools_def)) {
-    response <- process_tool_loop(
-      .api = api_obj,
-      .response = response,
-      .tools_def = tools_def,
-      .request_body = request_body,
-      .request = request,
-      .timeout = .timeout,
-      .max_tries = .max_tries,
-      .max_tool_rounds = .max_tool_rounds
-    )
-  }
-  
-  # Extract assistant reply
-  assistant_reply <- response$assistant_reply
-  
-  # Check for log probabilities
-  logprobs <- parse_logprobs(api_obj, response$raw)
-  
-  # Track rate limit
-  track_rate_limit(api_obj, response$headers, .verbose)
-  
-  # Update the LLMMessage with the assistant's response
-  add_message(
-    .llm = .llm,
-    .role = "assistant",
-    .content = assistant_reply,
-    .json = json,
-    .meta = response$meta,
-    .logprobs = logprobs
+  new_chat_request(
+    .request          = request,
+    .api              = api_obj,
+    .llm              = .llm,
+    .body             = request_body,
+    .tools_def        = tools_def,
+    .json             = json,
+    .mode             = if (isTRUE(.stream)) "stream" else "value",
+    .timeout          = .timeout,
+    .max_tries        = .max_tries,
+    .max_tool_rounds  = .max_tool_rounds,
+    .verbose          = .verbose
   )
 }
 
@@ -303,10 +307,8 @@ azure_openai_embedding <- function(.input,
   request <- httr2::request(.endpoint_url) |>
     httr2::req_url_path_append(paste0("openai/deployments/", .deployment,"/embeddings")) |>
     httr2::req_url_query(`api-version` = .api_version) |>
-    httr2::req_headers(
-      `Content-Type` = "application/json",
-      `api-key` = api_key,
-    )  |>
+    httr2::req_headers(`Content-Type` = "application/json") |>
+    httr2::req_headers_redacted(`api-key` = api_key)  |>
     httr2::req_body_json(data = request_body)
   
   # Return the request object if it's a dry run
@@ -480,10 +482,8 @@ send_azure_openai_batch <- function(.llms,
   upload_request <- httr2::request(.endpoint_url) |> 
     httr2::req_url_path_append("openai/files") |> 
     httr2::req_url_query(`api-version` = .api_version) |>
-    httr2::req_headers(
-      `Content-Type` = "multipart/form-data",
-      `api-key` = api_key
-    ) |>
+    httr2::req_headers(`Content-Type` = "multipart/form-data") |>
+    httr2::req_headers_redacted(`api-key` = api_key) |>
     httr2::req_body_multipart(
       purpose = "batch",
       file = curl::form_file(temp_file),
@@ -516,10 +516,8 @@ send_azure_openai_batch <- function(.llms,
   batch_request <- httr2::request(.endpoint_url) |> 
     httr2::req_url_path("openai/batches") |>
     httr2::req_url_query(`api-version` = .api_version) |>
-    httr2::req_headers(
-      `Content-Type` = "application/json",
-      `api-key` = api_key
-    ) |>
+    httr2::req_headers(`Content-Type` = "application/json") |>
+    httr2::req_headers_redacted(`api-key` = api_key) |>
     httr2::req_body_json(batch_request_body)
   
   batch_response <- batch_request |>
@@ -592,9 +590,7 @@ check_azure_openai_batch <- function(.llms = NULL,
   request <- httr2::request(.endpoint_url) |> 
     httr2::req_url_path(paste0('openai/batches/', .batch_id)) |> 
     httr2::req_url_query(`api-version` = "2024-10-01-preview") |>
-    httr2::req_headers(
-      `api-key` = api_key,
-    )
+    httr2::req_headers_redacted(`api-key` = api_key)
   
   # If .dry_run is TRUE, return the request object for inspection
   if (.dry_run) {
@@ -656,9 +652,7 @@ list_azure_openai_batches <- function(.endpoint_url = Sys.getenv('AZURE_ENDPOINT
   request <- httr2::request(.endpoint_url) |> 
     httr2::req_url_path('openai/batches') |> 
     httr2::req_url_query(`api-version` = "2024-10-01-preview") |>
-    httr2::req_headers(
-      `api-key` = api_key
-    ) |>
+    httr2::req_headers_redacted(`api-key` = api_key) |>
     httr2::req_url_query(limit = .limit)
   
   # Perform the request with retries and error handling
@@ -745,9 +739,7 @@ fetch_azure_openai_batch <- function(.llms,
   request <- httr2::request(.endpoint_url) |> 
     httr2::req_url_path(paste0('openai/batches/', .batch_id)) |> 
     httr2::req_url_query(`api-version` = "2024-10-01-preview") |>
-    httr2::req_headers(
-      `api-key` = api_key,
-    )
+    httr2::req_headers_redacted(`api-key` = api_key)
   
   # If .dry_run is TRUE, return the request object for inspection
   if (.dry_run) {
@@ -781,9 +773,7 @@ fetch_azure_openai_batch <- function(.llms,
   results_request <- httr2::request(.endpoint_url) |> 
     httr2::req_url_path(paste0('openai/files/', output_file_id, '/content')) |> 
     httr2::req_url_query(`api-version` = "2024-10-01-preview") |>
-    httr2::req_headers(
-      `api-key` = api_key,
-    )
+    httr2::req_headers_redacted(`api-key` = api_key)
   
   results_response <- results_request |>
     httr2::req_timeout(.timeout) |>
@@ -859,6 +849,7 @@ fetch_azure_openai_batch <- function(.llms,
 azure_openai <- create_provider_function(
   .name = "azure_openai",
   chat = azure_openai_chat,
+  build = azure_openai_build_chat_request,
   embed = azure_openai_embedding, 
   send_batch = send_azure_openai_batch, 
   check_batch = check_azure_openai_batch,

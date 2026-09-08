@@ -4,38 +4,59 @@
 APIProvider <- new_class("APIProvider",properties = list(
   short_name = class_character,
   long_name  = class_character,
-  api_key_env_var = class_character
+  api_key_env_var = class_character,
+  # Which reader the shared stream pump uses: "sse" for text/event-stream,
+  # "lines" for newline-delimited JSON. Set it at the construction site, never
+  # as a subclass default override: S7 0.2.2 records a subclass override in
+  # @properties but the constructor still returns the parent's value, silently,
+  # and a wrong transport points the SSE reader at an ndjson stream.
+  stream_transport = new_property(class_character, default = "sse")
 ))
 
 parse_chat_response        <- new_generic("parse_chat_response",c(".api",".content"))
 handle_stream              <- new_generic("handle_stream",c(".api",".stream_response"))
-generate_callback_function <- new_generic("generate_callback_function",".api")
+parse_stream_event         <- new_generic("parse_stream_event",".api")
 ratelimit_from_header      <- new_generic("ratelimit_from_header",c(".api", ".headers"))
 get_api_key                <- new_generic("get_api_key",".api")
 prepare_llms_for_batch     <- new_generic("prepare_llms_for_batch",".api")
 extract_metadata           <- new_generic("extract_metadata",c(".api", ".response"))
-extract_metadata_stream    <- new_generic("extract_metadata_stream",c(".api", ".stream_raw_data"))
 parse_logprobs             <- new_generic("parse_logprobs", c(".api", ".input"))
+assemble_stream_body   <- new_generic("assemble_stream_body", c(".api", ".events"))
 
-#Default method for the streaming callback function
+#' Defaults: a provider reports no rate limits and no logprobs
+#'
+#' Both generics used to be partial, defined only for the providers that had
+#' something to return, so every caller had to know in advance whether calling
+#' them was safe. That knowledge lived as two booleans on each chat request.
+#' With a default method the question is answered by the provider class, which is
+#' where the rest of this package's capability knowledge lives.
+#'
+#' Providers that inherit a method they should not use override it back to NULL
+#' next to their own class definition, the same way they override
+#' `extract_metadata()`.
 #'
 #' @noRd
-method(generate_callback_function,APIProvider) <- function(.api) {
-  # Default testing callback implementation
-  function(.data) {
-    if (is.null(.tidyllm_stream_env$testing_chunck_list)) {
-      .tidyllm_stream_env$testing_chunck_list <- list()
-    }
-    
-    # Append new data to the buffer
-    new_data <- rawToChar(.data, multiple = FALSE)
-    .tidyllm_stream_env$testing_chunck_list <- append(.tidyllm_stream_env$testing_chunck_list, new_data)
-    length(.tidyllm_stream_env$testing_chunck_list) |> cat("\n")
-    utils::flush.console()
-    TRUE
-  }
-}
+method(ratelimit_from_header, list(APIProvider, class_any)) <- function(.api, .headers) NULL
 
+#' @noRd
+method(parse_logprobs, list(APIProvider, class_any)) <- function(.api, .input) NULL
+
+#' Default: a provider's stream does not reassemble into a response body
+#'
+#' `assemble_stream_body()` folds the events a stream produced back into the
+#' body shape a blocking request would have returned, so that everything
+#' downstream of the transport, above all the tool loop, reads one shape and
+#' does not care how the response arrived.
+#'
+#' Providers that implement it can stream and call tools in the same request.
+#' No shipped provider inherits this default; a new one that does and accepts
+#' both is caught by an explicit check in `finish_chat_response()`, because the
+#' failure would otherwise be silent: `has_tool_calls()` reads an absent body as
+#' FALSE, so no tool would run and the model's preamble would be returned as the
+#' final answer.
+#'
+#' @noRd
+method(assemble_stream_body, list(APIProvider, class_any)) <- function(.api, .events) NULL
 
 #Default method for metadata extraction
 #'
@@ -54,31 +75,13 @@ method(extract_metadata, list(APIProvider,class_list))<- function(.api,.response
   )
 }  
 
-#Default method for metadata extraction
-#'
-#' @noRd
-method(extract_metadata_stream, list(APIProvider,class_list))<- function(.api,.stream_raw_data) {
-  list(
-    model             = NA_character_,
-    timestamp         = lubridate::as_datetime(lubridate::now()),
-    prompt_tokens     = NA_integer_,
-    completion_tokens = NA_integer_,
-    total_tokens      = NA_integer_,
-    cached_tokens         = NA_integer_,
-    cache_creation_tokens = NA_integer_,
-    stream            = TRUE,
-    specific_metadata = list() 
-  )
-}  
-
-
 #Default method for the API key checks
 #'
 #' @noRd
 method(get_api_key, APIProvider) <- function(.api,.dry_run=FALSE) {
   api_key <- Sys.getenv(.api@api_key_env_var)
   if (api_key == "" & .dry_run==FALSE) {
-    paste0("API key is not set. Please set it with: Sys.setenv(",api@api_key_env_var," = \"YOUR-KEY-GOES-HERE\")." ) |>
+    paste0("API key is not set. Please set it with: Sys.setenv(",.api@api_key_env_var," = \"YOUR-KEY-GOES-HERE\")." ) |>
       rlang::abort()
   }
   return(api_key)

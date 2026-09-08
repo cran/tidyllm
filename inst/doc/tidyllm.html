@@ -912,6 +912,12 @@ extended web search and synthesis. Perplexity’s
 <p>Streaming is useful for monitoring long responses interactively. For
 production data-analysis workflows the non-streaming mode is preferred
 because it provides complete metadata and is more reliable.</p>
+<p>To stream into a user interface rather than the console, use
+<code>send_chat()</code>, which dispatches a request without blocking
+the session and reports each delta through <code>.on_chunk</code>. See
+the article on <a href="https://edubruell.github.io/tidyllm/articles/tidyllm_shiny.html">using
+tidyllm in Shiny</a>, and the example app it walks through:
+<code>tidyllm_example_app(&quot;model_explainer&quot;)</code>.</p>
 </div>
 <div id="choosing-the-right-provider" class="section level2">
 <h2>Choosing the Right Provider</h2>

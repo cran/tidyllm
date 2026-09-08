@@ -4,6 +4,14 @@
 #' @noRd
 api_deepseek <- new_class("Deepseek", api_chat_completions)
 
+#' DeepSeek speaks the ChatCompletions wire format but returns none of OpenAI's
+#' `x-ratelimit-*` headers, so the inherited parser would raise and
+#' `track_rate_limit()` would turn that into a warning on every call.
+#'
+#' @noRd
+method(ratelimit_from_header, list(api_deepseek, class_any)) <- function(.api, .headers) NULL
+
+
 
 #' A function to get metadata from Perplexity responses
 #'
@@ -78,6 +86,33 @@ deepseek_chat <- function(.llm,
                           .dry_run = FALSE,
                           .max_tries = 3,
                           .max_tool_rounds = 10) {
+  built <- do.call(deepseek_build_chat_request, mget(names(formals())), quote = TRUE)
+  run_chat_pipeline(built, .dry_run)
+}
+
+#' Build a DeepSeek chat request without performing it
+#'
+#' @noRd
+deepseek_build_chat_request <- function(.llm,
+                          .model = "deepseek-v4-pro",
+                          .thinking = NULL,
+                          .max_tokens = 2048,
+                          .temperature = NULL,
+                          .top_p = NULL,
+                          .frequency_penalty = NULL,
+                          .presence_penalty = NULL,
+                          .stop = NULL,
+                          .stream = FALSE,
+                          .logprobs = NULL,
+                          .top_logprobs = NULL,
+                          .tools = NULL,
+                          .tool_choice = NULL,
+                          .api_url = "https://api.deepseek.com/",
+                          .timeout = 60,
+                          .verbose = FALSE,
+                          .dry_run = FALSE,
+                          .max_tries = 3,
+                          .max_tool_rounds = 10) {
 
   # Validate inputs
   c(
@@ -95,7 +130,6 @@ deepseek_chat <- function(.llm,
     "Input .top_logprobs must be NULL or an integer between 0 and 5" = is.null(.top_logprobs) | (is_integer_valued(.top_logprobs) & .top_logprobs >= 0 & .top_logprobs <= 5),
     "Input .tools must be NULL, a TOOL object, or a list of TOOL objects" = is.null(.tools) || S7_inherits(.tools, TOOL) || (is.list(.tools) && all(purrr::map_lgl(.tools, ~ S7_inherits(.x, TOOL)))),
     "Input .tool_choice must be NULL or a character (one of 'none', 'auto', 'required')" = is.null(.tool_choice) || (is.character(.tool_choice) && .tool_choice %in% c("none", "auto", "required")),
-    "Streaming is not supported for requests with tool calls" = is.null(.tools) || !isTRUE(.stream),
     "Streaming is not supported for requests with logprobs" = is.null(.logprobs) || !isTRUE(.stream),
     "Input .tool_choice must be NULL or one of 'none', 'auto', 'required'" = is.null(.tool_choice) | (.tool_choice %in% c("none", "auto", "required")),
     "Input .api_url must be a valid URL" = is.character(.api_url) & nzchar(.api_url),
@@ -147,37 +181,19 @@ deepseek_chat <- function(.llm,
     ) |>
     httr2::req_body_json(data = request_body)
   
-  if (.dry_run) {
-    return(request)
-  }
-  
-  response <- perform_chat_request(request, api_obj, .stream, .timeout, .max_tries)
-  
-  # Handle tool calls with multi-turn support
-  if (.stream == FALSE && !is.null(tools_def)) {
-    response <- process_tool_loop(
-      .api = api_obj,
-      .response = response,
-      .tools_def = tools_def,
-      .request_body = request_body,
-      .request = request,
-      .timeout = .timeout,
-      .max_tries = .max_tries,
-      .max_tool_rounds = .max_tool_rounds
-    )
-  }
-  
-  assistant_reply <- response$assistant_reply
-
-  logprobs  <- parse_logprobs(api_obj, response$raw)
-  
-  
-  add_message(.llm     = .llm,
-              .role    = "assistant", 
-              .content = assistant_reply , 
-              .json    = FALSE,
-              .meta    = response$meta,
-              .logprobs = logprobs)
+  new_chat_request(
+    .request          = request,
+    .api              = api_obj,
+    .llm              = .llm,
+    .body             = request_body,
+    .tools_def        = tools_def,
+    .json             = FALSE,
+    .mode             = if (isTRUE(.stream)) "stream" else "value",
+    .timeout          = .timeout,
+    .max_tries        = .max_tries,
+    .max_tool_rounds  = .max_tool_rounds,
+    .verbose          = .verbose
+  )
 }
 
 #' Deepseek Provider Function
@@ -199,5 +215,6 @@ deepseek_chat <- function(.llm,
 #' @export
 deepseek <- create_provider_function(
   .name = "deepseek",
-  chat = deepseek_chat
+  chat = deepseek_chat,
+  build = deepseek_build_chat_request
 )

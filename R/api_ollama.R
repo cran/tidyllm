@@ -75,65 +75,71 @@ method(extract_metadata, list(api_ollama,class_list))<- function(.api,.response)
   )
 }  
 
-#' A function to get metadata from Openai streaming responses
+#' Parse one Ollama stream line
+#'
+#' Ollama sends newline-delimited JSON rather than SSE; one complete object per
+#' line, with `done = TRUE` on the last. Every object is kept, including the
+#' terminal one, which is where the token counts live.
 #'
 #' @noRd
-method(extract_metadata_stream, list(api_ollama,class_list))<- function(.api,.stream_raw_data) {
-  final_stream_chunk <- .stream_raw_data[[length(.stream_raw_data)]]
-  
-  list(
-    model             = final_stream_chunk$model,
-    timestamp         = lubridate::as_datetime(final_stream_chunk$created),
-    prompt_tokens     = final_stream_chunk$prompt_eval_count,
-    completion_tokens = final_stream_chunk$eval_count,
-    total_tokens      = final_stream_chunk$prompt_eval_count + final_stream_chunk$eval_count,
-    stream            = TRUE,
-    specific_metadata = list(
-      done_reason     = final_stream_chunk$done_reason,
-      total_duration_ns  = final_stream_chunk$total_duration,
-      load_duration_ns   = final_stream_chunk$load_duration,
-      eval_duration_ns   = final_stream_chunk$eval_duration
-    ) 
-  )
-}  
+method(parse_stream_event, api_ollama) <- function(.api, .chunk) {
+  parsed <- parse_stream_json(.chunk[[1]])
+  if (is.null(parsed)) return(stream_event("noop"))
 
-#' A method to handle streaming requests for ollama
-#'
-#' @noRd
-method(handle_stream,list(api_ollama,new_S3_class("httr2_response"))) <- function(.api,.stream_response) {
-  stream_text <- ""
-  stream_data <- list()
-  repeat {
-    #Sleep for a tiny bit because Ollama often hangs on sending complete lines
-    Sys.sleep(0.25)
-    stream_chunk   <- httr2::resp_stream_lines(.stream_response)
-  
-    stream_content <- stream_chunk |> 
-      jsonlite::fromJSON()
-    
-    stream_data <- append(stream_data,list(stream_content))
-    if (stream_content$done==TRUE) {
-      close(.stream_response)
-      message("\n---------\nStream finished\n---------\n")
-      break
-    }
-
-    chunk_text  <- stream_content$message$content
-    stream_text <- paste0(stream_text, chunk_text)
-    cat(chunk_text)
-    utils::flush.console()
-    next
+  if (!is.null(parsed$error)) {
+    return(stream_event("error", error = parsed$error, keep = TRUE, event = parsed))
   }
-  
-  list(
-    reply = stream_text,
-    raw_data = stream_data
-  )
+
+  if (isTRUE(parsed$done)) {
+    return(stream_event("meta", done = TRUE, keep = TRUE, event = parsed))
+  }
+
+  thinking <- parsed$message$thinking
+  if (!is.null(thinking) && nzchar(thinking)) {
+    return(stream_event("thinking", text = thinking, keep = TRUE, event = parsed))
+  }
+
+  stream_event("text", text = parsed$message$content, keep = TRUE, event = parsed)
 }
 
 
 
-#' A chat parsing method for Ollama to extract the assitant response 
+#' Rebuild an Ollama message body from its stream events
+#'
+#' Ollama streams one JSON object per token and sends tool calls whole, with
+#' `arguments` already parsed, so only the text needs joining. Calls are
+#' collected in arrival order rather than by `function$index`: the index is
+#' present in the recorded stream but is not documented as stable, and arrival
+#' order is what the blocking response returns.
+#'
+#' @noRd
+method(assemble_stream_body, list(api_ollama, class_list)) <- function(.api, .events) {
+  text     <- character()
+  thinking <- character()
+  calls    <- list()
+  envelope <- list()
+
+  for (event in .events) {
+    envelope <- merge_stream_envelope(
+      envelope, event,
+      c("model", "created_at", "done", "done_reason", "total_duration",
+        "load_duration", "prompt_eval_count", "prompt_eval_duration",
+        "eval_count", "eval_duration")
+    )
+    msg      <- event$message %||% list()
+    text     <- c(text, msg$content %||% character())
+    thinking <- c(thinking, msg$thinking %||% character())
+    calls    <- append(calls, msg$tool_calls %||% list())
+  }
+
+  assembled <- list(role = "assistant", content = paste0(text, collapse = ""))
+  if (length(thinking) > 0) assembled$thinking <- paste0(thinking, collapse = "")
+  if (length(calls) > 0)    assembled$tool_calls <- calls
+
+  utils::modifyList(envelope, list(message = assembled))
+}
+
+#' A chat parsing method for Ollama to extract the assitant response
 #'
 #' @noRd
 method(parse_chat_response, list(api_ollama,class_list)) <- function(.api,.content) {
@@ -237,6 +243,7 @@ method(append_tool_messages, list(api_ollama, class_any, class_any, class_any)) 
 #' @param .keep_alive Character; How long should the ollama model be kept in memory after request (default: NULL - 5 Minutes)
 #' @param .ollama_server String; Ollama API endpoint (default: "http://localhost:11434")
 #' @param .timeout Integer; API request timeout in seconds (default: 120)
+#' @param .max_tries Integer; maximum number of retries for the request (default: 3)
 #' @param .dry_run Logical; if TRUE, returns request object without execution (default: FALSE)
 #'
 #' @return A new LLMMessage object containing the original messages plus the model's response
@@ -288,6 +295,40 @@ ollama_chat <- function(.llm,
                    .think = NULL,
                    .ollama_server = "http://localhost:11434",
                    .timeout = 120,
+                   .max_tries = 3,
+                   .keep_alive = NULL,
+                   .dry_run = FALSE) {
+  built <- do.call(ollama_build_chat_request, mget(names(formals())), quote = TRUE)
+  run_chat_pipeline(built, .dry_run)
+}
+
+#' Build a Ollama chat request without performing it
+#'
+#' @noRd
+ollama_build_chat_request <- function(.llm,
+                   .model = "qwen3.5:4b",
+                   .stream = FALSE,
+                   .seed = NULL,
+                   .json_schema = NULL,
+                   .temperature = NULL,
+                   .num_ctx = 32768,
+                   .num_predict = NULL,
+                   .top_k = NULL,
+                   .top_p = NULL,
+                   .min_p = NULL,
+                   .mirostat = NULL,
+                   .mirostat_eta = NULL,
+                   .mirostat_tau = NULL,
+                   .repeat_last_n = NULL,
+                   .repeat_penalty = NULL,
+                   .tools = NULL,
+                   .max_tool_rounds = 10,
+                   .tfs_z = NULL,
+                   .stop = NULL,
+                   .think = NULL,
+                   .ollama_server = "http://localhost:11434",
+                   .timeout = 120,
+                   .max_tries = 3,
                    .keep_alive = NULL,
                    .dry_run = FALSE) {
 
@@ -316,12 +357,12 @@ ollama_chat <- function(.llm,
     "Input .tools must be NULL, a TOOL object, or a list of TOOL objects" = is.null(.tools) || S7_inherits(.tools, TOOL) || (is.list(.tools) && all(purrr::map_lgl(.tools, ~ S7_inherits(.x, TOOL)))),
     "Input .think must be logical or one of 'high', 'medium', 'low' if provided" = is.null(.think) || is.logical(.think) || (.think %in% c("high", "medium", "low")),
     "Input .dry_run must be logical" = is.logical(.dry_run),
-    "Streaming is not supported for requests with tool calls" = is.null(.tools) || !isTRUE(.stream),
     ".max_tool_rounds must be a positive integer" = is_integer_valued(.max_tool_rounds) && .max_tool_rounds >= 1
   ) |>
     validate_inputs()
 
-  api_obj <- api_ollama(short_name = "ollama",long_name = "Ollama")
+  api_obj <- api_ollama(short_name = "ollama", long_name = "Ollama",
+                        stream_transport = "lines")
   # Get formatted message list for ollama models
   ollama_messages <-  to_api_format(.llm,api_obj)
   
@@ -381,32 +422,18 @@ ollama_chat <- function(.llm,
     httr2::req_url_path("/api/chat") |>
     httr2::req_body_json(ollama_request_body)
   
-  # Return only the request object in a dry run.
-  if (.dry_run) {
-    return(request)  
-  }
-  
-  # Perform the API request
-  response <- perform_chat_request(request, api_obj, .stream, .timeout, 3)
-  
-  if (.stream == FALSE && !is.null(tools_def)) {
-    response <- process_tool_loop(
-      .api = api_obj,
-      .response = response,
-      .tools_def = tools_def,
-      .request_body = ollama_request_body,
-      .request = request,
-      .timeout = .timeout,
-      .max_tries = 3,
-      .max_tool_rounds = .max_tool_rounds
-    )
-  }
-  
-  add_message(.llm     = .llm,
-              .role    = "assistant", 
-              .content = response$assistant_reply, 
-              .json    = json,
-              .meta    = response$meta)
+  new_chat_request(
+    .request          = request,
+    .api              = api_obj,
+    .llm              = .llm,
+    .body             = ollama_request_body,
+    .tools_def        = tools_def,
+    .json             = json,
+    .mode             = if (isTRUE(.stream)) "stream" else "value",
+    .timeout          = .timeout,
+    .max_tries        = .max_tries,
+    .max_tool_rounds  = .max_tool_rounds
+  )
 }
 
 
@@ -563,7 +590,8 @@ send_ollama_batch <- function(.llms,
   ) |>
     validate_inputs()
   
-  api_obj <- api_ollama(short_name = "ollama",long_name = "Ollama")
+  api_obj <- api_ollama(short_name = "ollama", long_name = "Ollama",
+                        stream_transport = "lines")
   
   # Handle JSON schema
   json=FALSE
@@ -797,6 +825,7 @@ ollama_delete_model <- function(.model, .ollama_server = "http://localhost:11434
 ollama <- create_provider_function(
   .name = "ollama",
   chat = ollama_chat,
+  build = ollama_build_chat_request,
   embed = ollama_embedding,
   send_batch = send_ollama_batch,
   list_models = ollama_list_models   

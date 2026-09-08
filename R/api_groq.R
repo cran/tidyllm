@@ -4,6 +4,13 @@
 #' @noRd
 api_groq <- new_class("Groq", api_chat_completions)
 
+#' Groq exposes no way to request logprobs, so the inherited ChatCompletions
+#' parser has nothing to find.
+#'
+#' @noRd
+method(parse_logprobs, list(api_groq, class_any)) <- function(.api, .input) NULL
+
+
 #' A function to get metadata from Openai responses
 #'
 #' @noRd
@@ -88,6 +95,32 @@ groq_chat <- function(.llm,
                  .dry_run = FALSE,
                  .max_tries = 3,
                  .max_tool_rounds = 10) {
+  built <- do.call(groq_build_chat_request, mget(names(formals())), quote = TRUE)
+  run_chat_pipeline(built, .dry_run)
+}
+
+#' Build a Groq chat request without performing it
+#'
+#' @noRd
+groq_build_chat_request <- function(.llm,
+                 .model = "openai/gpt-oss-120b",
+                 .max_tokens = 1024,
+                 .temperature = NULL,
+                 .top_p = NULL,
+                 .frequency_penalty = NULL,
+                 .presence_penalty = NULL,
+                 .stop = NULL,
+                 .seed = NULL,
+                 .tools = NULL,
+                 .tool_choice = NULL,
+                 .api_url = "https://api.groq.com/",
+                 .json_schema = NULL,
+                 .timeout = 60,
+                 .verbose = FALSE,
+                 .stream = FALSE,
+                 .dry_run = FALSE,
+                 .max_tries = 3,
+                 .max_tool_rounds = 10) {
 
   # Validate inputs
   c(
@@ -108,8 +141,7 @@ groq_chat <- function(.llm,
     "Input .verbose must be logical" = is.logical(.verbose),
     "Input .max_tries must be integer-valued numeric" = is_integer_valued(.max_tries),
     "Input .dry_run must be logical" = is.logical(.dry_run),
-    ".max_tool_rounds must be a positive integer" = is_integer_valued(.max_tool_rounds) && .max_tool_rounds >= 1,
-    "Streaming is not supported for requests with tool calls" = is.null(.tools) || !isTRUE(.stream)
+    ".max_tool_rounds must be a positive integer" = is_integer_valued(.max_tool_rounds) && .max_tool_rounds >= 1
   ) |>
     validate_inputs()
   
@@ -182,37 +214,19 @@ groq_chat <- function(.llm,
     ) |>
     httr2::req_body_json(data = request_body)
   
-  # Return only the request object in a dry run.
-  if (.dry_run) {
-    return(request)  
-  }
-  
-  response <- perform_chat_request(request,api_obj,.stream,.timeout,.max_tries)
-  
-  # Handle tool calls with multi-turn support
-  if (.stream == FALSE && !is.null(tools_def)) {
-    response <- process_tool_loop(
-      .api = api_obj,
-      .response = response,
-      .tools_def = tools_def,
-      .request_body = request_body,
-      .request = request,
-      .timeout = .timeout,
-      .max_tries = .max_tries,
-      .max_tool_rounds = .max_tool_rounds
-    )
-  }
-  
-  # Extract assistant reply and rate limiting info from response headers
-  assistant_reply <- response$assistant_reply
-  track_rate_limit(api_obj,response$headers,.verbose)
-  
-  # Add model's message to the history of the LLMMessage object
-  add_message(.llm     = .llm,
-              .role    = "assistant",
-              .content = assistant_reply,
-              .json    = json,
-              .meta    = response$meta)
+  new_chat_request(
+    .request          = request,
+    .api              = api_obj,
+    .llm              = .llm,
+    .body             = request_body,
+    .tools_def        = tools_def,
+    .json             = json,
+    .mode             = if (isTRUE(.stream)) "stream" else "value",
+    .timeout          = .timeout,
+    .max_tries        = .max_tries,
+    .max_tool_rounds  = .max_tool_rounds,
+    .verbose          = .verbose
+  )
 }
 
 
@@ -891,6 +905,7 @@ list_groq_batches <- function(.api_url = "https://api.groq.com/",
 groq <- create_provider_function(
   .name = "groq",
   chat = groq_chat,
+  build = groq_build_chat_request,
   list_models = groq_list_models,
   send_batch = send_groq_batch,
   check_batch = check_groq_batch,

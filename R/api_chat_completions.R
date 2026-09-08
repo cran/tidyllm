@@ -4,6 +4,22 @@
 #' @noRd
 api_chat_completions <- new_class("ChatCompletions", APIProvider)
 
+#' A third-party endpoint speaking the OpenAI dialect
+#'
+#' `.compatible = TRUE` means some other vendor's server behind an OpenAI-shaped
+#' API. It parses and formats identically, so it inherits everything, but it does
+#' not return OpenAI's `x-ratelimit-*` headers and the inherited parser would
+#' raise on their absence.
+#'
+#' This is a class rather than a flag because it is a statement about what the
+#' endpoint is, not about what this one call should do.
+#'
+#' @noRd
+api_compatible <- new_class("OpenAI-compatible", api_chat_completions)
+
+#' @noRd
+method(ratelimit_from_header, list(api_compatible, class_any)) <- function(.api, .headers) NULL
+
 #' Convert LLMMessage to OpenAI API-Compatible Format
 #'
 #' Converts the `message_history` of an `LLMMessage` object into the
@@ -114,31 +130,6 @@ method(extract_metadata, list(api_chat_completions, class_list)) <- function(.ap
   )
 }
 
-#' A function to get metadata from Openai streaming responses
-#'
-#' @noRd
-method(extract_metadata_stream, list(api_chat_completions,class_list))<- function(.api,.stream_raw_data) {
-  final_stream_chunk <- .stream_raw_data |> 
-    purrr::keep(~!is.null(.x$usage))|>
-    unlist(recursive = FALSE)
-  
-  list(
-    model             = final_stream_chunk$model,
-    timestamp         = lubridate::as_datetime(final_stream_chunk$created),
-    prompt_tokens     = final_stream_chunk$usage$prompt_tokens,
-    completion_tokens = final_stream_chunk$usage$completion_tokens,
-    total_tokens      = final_stream_chunk$usage$total_tokens,
-    cached_tokens         = as_token_count(final_stream_chunk$usage$prompt_tokens_details$cached_tokens),
-    cache_creation_tokens = NA_integer_,
-    stream            = TRUE,
-    specific_metadata = list(
-      system_fingerprint = final_stream_chunk$system_fingerprint,
-      completion_tokens_details = final_stream_chunk$usage$completion_tokens_details,
-      prompt_tokens_details = final_stream_chunk$usage$prompt_tokens_details
-    ) 
-  )
-}  
-
 #' A function to get loprobs from Openai responses
 #'
 #' @noRd
@@ -160,27 +151,17 @@ method(parse_logprobs, list(api_chat_completions, class_list)) <- function(.api,
     )
   }
   
-  #Extract log-probs for standard responses
+  # One branch for both transports. Streams used to need their own, walking the
+  # per-chunk deltas, because `raw` held the raw event list; since 0.6.0
+  # `assemble_stream_body()` collects the streamed logprob entries into the
+  # same `choices[[1]]$logprobs$content` a blocking response carries.
   if(!is.null(.input$content$choices)){
     input <- .input$content$choices[[1]]
     if (!is.null(input$logprobs)) {
       return(purrr::map(input$logprobs$content, parse_token))
     }
   }
-  
-  #Extract log-probs for streaming responses
-  if(r_has_name(.input,"delta")){
-    logprobs <- .input |> 
-        purrr::map("choices") |>
-        purrr::map(1) |>
-        purrr::map("logprobs") |>
-        purrr::map("content") |>
-        purrr::compact() |> 
-      purrr::map(~parse_token(.x[[1]])) 
-    
-    return(logprobs)
-  }
-  
+
   NULL  # Return NULL if no logprobs are found
 }
 
@@ -251,55 +232,123 @@ method(append_tool_messages, list(api_chat_completions, class_any, class_any, cl
   }
 
 
-#' A method to handle streaming requests
-#' request
+#' Parse one Chat Completions SSE event
+#'
+#' The terminal marker is the literal string `[DONE]`, which is not JSON. Every
+#' JSON event is kept, including the final usage-only chunk that carries no
+#' choices: that is where `usage` arrives, and the assembler merges it into the
+#' body the metadata is read from.
 #'
 #' @noRd
-method(handle_stream,list(api_chat_completions,new_S3_class("httr2_response"))) <- function(.api,.stream_response) {
-  stream_text <- ""
-  stream_data <- list()
-  repeat {
-    stream_chunk <- httr2::resp_stream_sse(.stream_response)
-    
-    # Skip empty chunks
-    if (is.null(stream_chunk$data) || !nzchar(stream_chunk$data)) {
-      next  
-    }
-    
-    if (stream_chunk$data == "[DONE]") {
-      stream_data <- append(stream_data,list(parsed_event))
-      close(.stream_response)
-      message("\n---------\nStream finished\n---------\n")
-      break
-    }
-    
-    # Try to parse the JSON content
-    parsed_event <- tryCatch(
-      jsonlite::fromJSON(stream_chunk$data, simplifyVector = FALSE, simplifyDataFrame = FALSE),
-      error = function(e) {
-        message("Failed to parse JSON: ", e$message)
-        return(NULL)
-      }
+method(parse_stream_event, api_chat_completions) <- function(.api, .chunk) {
+  if (identical(.chunk$data, "[DONE]")) return(stream_event("meta", done = TRUE))
+
+  parsed <- parse_stream_json(.chunk$data)
+  if (is.null(parsed)) return(stream_event("noop"))
+
+  if (!is.null(parsed$error)) {
+    detail <- parsed$error$message %||% "unknown error"
+    return(stream_event("error", error = detail, keep = TRUE, event = parsed))
+  }
+
+  text <- NULL
+  if (length(parsed$choices) >= 1) text <- parsed$choices[[1]]$delta$content
+
+  if (!is.null(text) && nzchar(text)) {
+    stream_event("text", text = text, keep = TRUE, event = parsed)
+  } else {
+    stream_event("meta", keep = TRUE, event = parsed)
+  }
+}
+
+#' Rebuild a Chat Completions body from its stream events
+#'
+#' Tool call deltas are accumulated by `index` unconditionally. Both providers
+#' recorded in `local_tests/fixtures/streams/` happened to send each call whole,
+#' but that is a property of those two models on those two days, not of the
+#' format: OpenAI's own Chat Completions endpoint routinely splits `arguments`
+#' across chunks and sends the `id` and `name` only on the first. Accumulating
+#' regardless costs nothing and is the only version that is right in both cases.
+#'
+#' @noRd
+method(assemble_stream_body, list(api_chat_completions, class_list)) <- function(.api, .events) {
+  text      <- character()
+  reasoning <- character()
+  calls     <- list()
+  indices   <- character()
+  logprobs  <- list()
+  finish    <- NULL
+  envelope  <- list()
+
+  for (event in .events) {
+    envelope <- merge_stream_envelope(
+      envelope, event,
+      # `search_results` and `citations` are Perplexity's; they are response-level
+      # in exactly the same way, and `intersect()` ignores them elsewhere.
+      c("id", "model", "created", "object", "system_fingerprint", "usage",
+        "search_results", "citations")
     )
-    
-    if (!is.null(parsed_event)) {
-      if(length(parsed_event$choices) >= 1) {
-        stream_data <- append(stream_data,list(parsed_event))
-        
-        delta_content <- parsed_event$choices[[1]]$delta$content
-        if (!is.null(delta_content)) {
-          stream_text <- paste0(stream_text, delta_content)
-          cat(delta_content)
-          utils::flush.console()
-        }
+
+    # The final usage-only chunk carries no choices at all.
+    if (length(event$choices) == 0) next
+    choice <- event$choices[[1]]
+    finish <- choice$finish_reason %||% finish
+
+    delta <- choice$delta %||% list()
+    if (!is.null(delta$content))   text      <- c(text, delta$content)
+    # Reasoning models on this dialect (Groq's gpt-oss, DeepSeek) stream their
+    # chain of thought in a sibling field that the blocking body also carries.
+    if (!is.null(delta$reasoning)) reasoning <- c(reasoning, delta$reasoning)
+
+    # Streamed logprobs arrive one token per chunk under the same key a blocking
+    # response uses for the whole array.
+    logprobs <- c(logprobs, choice$logprobs$content %||% list())
+
+    for (call in delta$tool_calls %||% list()) {
+      # `index` is what fragments of the same call are accumulated on. Some
+      # OpenAI-compatible servers omit it when the chunk carries a single call,
+      # and dropping that call would be silent: `has_tool_calls()` would return
+      # FALSE, no loop would run, and the model's preamble would be returned as
+      # the final answer. So a lone call falls back to slot 0, and only an
+      # index-less call arriving beside others is skipped, because there it
+      # genuinely cannot be attributed.
+      index <- call$index %||% if (length(delta$tool_calls) == 1) 0L else NULL
+      if (is.null(index)) next
+      key <- as.character(index)
+
+      if (is.null(calls[[key]])) {
+        calls[[key]] <- list(id = NULL, type = "function",
+                             `function` = list(name = NULL, arguments = character()))
+        indices <- c(indices, key)
       }
+      calls[[key]]$id   <- call$id   %||% calls[[key]]$id
+      calls[[key]]$type <- call$type %||% calls[[key]]$type
+      calls[[key]]$`function`$name <- call$`function`$name %||% calls[[key]]$`function`$name
+      calls[[key]]$`function`$arguments <-
+        c(calls[[key]]$`function`$arguments, call$`function`$arguments %||% character())
     }
   }
-  
-  list(
-    reply = stream_text,
-    raw_data = stream_data
-  )
+
+  assembled <- lapply(indices, function(key) {
+    call <- calls[[key]]
+    args <- paste0(call$`function`$arguments, collapse = "")
+    # A call with no argument fragments is a no-argument call, which is `"{}"`
+    # in this dialect. Leaving it `""` makes `run_tool_calls()` fail to parse,
+    # warn, and drop the result, while the assistant message it builds still
+    # announces the call; the follow-up request is then a tool_calls entry with
+    # no matching tool message, which these endpoints reject.
+    call$`function`$arguments <- if (nzchar(args)) args else "{}"
+    call
+  })
+
+  msg <- list(role = "assistant", content = paste0(text, collapse = ""))
+  if (length(reasoning) > 0) msg$reasoning <- paste0(reasoning, collapse = "")
+  if (length(assembled) > 0) msg$tool_calls <- assembled
+
+  choice <- list(index = 0L, message = msg, finish_reason = finish)
+  if (length(logprobs) > 0) choice$logprobs <- list(content = logprobs)
+
+  utils::modifyList(envelope, list(choices = list(choice)))
 }
 
 
@@ -470,6 +519,41 @@ cc_chat <- function(
     .tool_choice = NULL,
     .max_tool_rounds = 10
 ) {
+  built <- do.call(cc_build_chat_request, mget(names(formals())), quote = TRUE)
+  run_chat_pipeline(built, .dry_run)
+}
+
+#' Build a ChatCompletions request without performing it
+#'
+#' @noRd
+cc_build_chat_request <- function(
+    .llm,
+    .model = "gpt-5.6-terra",
+    .max_completion_tokens = NULL,
+    .reasoning_effort = NULL,
+    .frequency_penalty = NULL,
+    .logit_bias = NULL,
+    .presence_penalty = NULL,
+    .seed = NULL,
+    .stop = NULL,
+    .stream = FALSE,
+    .temperature = NULL,
+    .top_p = NULL,
+    .api_url = "https://api.openai.com/",
+    .timeout = 60,
+    .verbose = FALSE,
+    .json_schema = NULL,
+    .max_tries = 3,
+    .dry_run = FALSE,
+    .compatible = FALSE,
+    .api_path = "/v1/chat/completions",
+    .api_key_env_var = "OPENAI_API_KEY",
+    .logprobs = NULL,
+    .top_logprobs = NULL,
+    .tools = NULL,
+    .tool_choice = NULL,
+    .max_tool_rounds = 10
+) {
   # Validate inputs
   c(
     "Input .llm must be an LLMMessage object" = S7_inherits(.llm, LLMMessage),
@@ -496,12 +580,12 @@ cc_chat <- function(
     "Input .top_logprobs must be NULL or an integer between 0 and 5" = is.null(.top_logprobs) | (is_integer_valued(.top_logprobs) && .top_logprobs >= 0 && .top_logprobs <= 5),
     "Input .tools must be NULL, a TOOL object, or a list of TOOL objects" = is.null(.tools) || S7_inherits(.tools, TOOL) || (is.list(.tools) && all(purrr::map_lgl(.tools, ~ S7_inherits(.x, TOOL)))),
     "Input .tool_choice must be NULL or a character (one of 'none', 'auto', 'required')" = is.null(.tool_choice) || (is.character(.tool_choice) && .tool_choice %in% c("none", "auto", "required")),
-    ".max_tool_rounds must be a positive integer" = is_integer_valued(.max_tool_rounds) && .max_tool_rounds >= 1,
-    "Streaming is not supported for requests with tool calls" = is.null(.tools) || !isTRUE(.stream)
+    ".max_tool_rounds must be a positive integer" = is_integer_valued(.max_tool_rounds) && .max_tool_rounds >= 1
   ) |> validate_inputs()
   
   # Create API object
-  api_obj <- api_chat_completions(
+  api_ctor <- if (.compatible) api_compatible else api_chat_completions
+  api_obj <- api_ctor(
     short_name = "openai",
     long_name = "OpenAI",
     api_key_env_var = .api_key_env_var
@@ -574,46 +658,18 @@ cc_chat <- function(
     request <- request |> httr2::req_headers(`Content-Type` = "application/json")
   }
   
-  # Return only the request object in a dry run
-  if (.dry_run) {
-    return(request)
-  }
-  
-  # Perform the request
-  response <- perform_chat_request(request, api_obj, .stream, .timeout, .max_tries)
-  
-  if (.stream == FALSE && !is.null(tools_def)) {
-    response <- process_tool_loop(
-      .api = api_obj,
-      .response = response,
-      .tools_def = tools_def,
-      .request_body = request_body,
-      .request = request,
-      .timeout = .timeout,
-      .max_tries = .max_tries,
-      .max_tool_rounds = .max_tool_rounds
-    )
-  }
-  
-  # Extract assistant reply
-  assistant_reply <- response$assistant_reply
-  
-  # Check for log probabilities
-  logprobs <- parse_logprobs(api_obj, response$raw)
-  
-  # Track rate limit if not using a compatible API
-  if (!.compatible) {
-    track_rate_limit(api_obj, response$headers, .verbose)
-  }
-  
-  # Update the LLMMessage with the assistant's response
-  add_message(
-    .llm = .llm,
-    .role = "assistant",
-    .content = assistant_reply,
-    .json = json,
-    .meta = response$meta,
-    .logprobs = logprobs
+  new_chat_request(
+    .request          = request,
+    .api              = api_obj,
+    .llm              = .llm,
+    .body             = request_body,
+    .tools_def        = tools_def,
+    .json             = json,
+    .mode             = if (isTRUE(.stream)) "stream" else "value",
+    .timeout          = .timeout,
+    .max_tries        = .max_tries,
+    .max_tool_rounds  = .max_tool_rounds,
+    .verbose          = .verbose
   )
 }
 
@@ -1322,53 +1378,6 @@ openai_list_models <- function(.api_url = "https://api.openai.com",
 }
 
 
-#' OpenAI Provider Function
-#'
-#' The `openai()` function acts as an interface for interacting with the OpenAI API 
-#' through main `tidyllm` verbs such as `chat()`, `embed()`, and 
-#' `send_batch()`. It dynamically routes requests to OpenAI-specific functions 
-#' like `openai_chat()` and `openai_embedding()` based on the context of the call.
-#'
-#' @param ... Parameters to be passed to the appropriate OpenAI-specific function, 
-#'   such as model configuration, input text, or API-specific options.
-#' @param .called_from An internal argument that specifies which action (e.g., 
-#'   `chat`, `embed`, `send_batch`) the function is being invoked from. 
-#'   This argument is automatically managed and should not be modified by the user.
-#'
-#' @return The result of the requested action, depending on the specific function invoked 
-#'   (e.g., an updated `LLMMessage` object for `chat()`, or a matrix for `embed()`).
-#' 
-#' @export
-openai <- create_provider_function(
-  .name = "openai",
-  chat = cc_chat,
-  embed = openai_embedding,
-  send_batch = send_openai_batch,
-  check_batch = check_openai_batch,
-  list_batches = list_openai_batches,
-  fetch_batch = fetch_openai_batch,
-  list_models = openai_list_models
-)
-
-#' Alias for the OpenAI Provider Function
-#'
-#' The `chatgpt` function is an alias for the `openai()` provider function. 
-#' It provides a convenient way to interact with the OpenAI API for tasks such 
-#' as sending chat messages, generating embeddings, and handling batch operations 
-#' using `tidyllm` verbs like `chat()`, `embed()`, and `send_batch()`.
-#'
-#' @param ... Parameters to be passed to the appropriate OpenAI-specific function, 
-#'   such as model configuration, input text, or other API-specific options.
-#' @param .called_from An internal argument that specifies the context (e.g., 
-#'   `chat`, `embed`, `send_batch`) in which the function is being 
-#'   invoked. This is automatically managed and should not be modified by the user.
-#'
-#' @return The result of the requested action, depending on the specific function invoked
-#'   (e.g., an updated `LLMMessage` object for `chat()`, or a matrix for `embed()`).
-#' @keywords internal
-#' @export
-chatgpt <- openai
-
 #' Chat with any OpenAI-Compatible API Endpoint
 #'
 #' @description
@@ -1401,9 +1410,34 @@ chat_completions_chat <- function(.llm,
   )
 }
 
+#' Build a generic ChatCompletions request without performing it
+#'
+#' `chat_completions()` is the one provider whose chat function is not a thin
+#' rename of its builder: it derives `.compatible` from whether a key variable
+#' was named. `send_chat()` has to go through the same derivation, so it gets
+#' its own wrapper rather than `cc_build_chat_request()` directly.
+#'
+#' @noRd
+chat_completions_build_chat_request <- function(.llm,
+                                                .api_url,
+                                                .api_key_env_var = NULL,
+                                                .model = "default",
+                                                ...) {
+  use_auth <- !is.null(.api_key_env_var)
+  cc_build_chat_request(
+    .llm = .llm,
+    .model = .model,
+    .api_url = .api_url,
+    .api_key_env_var = .api_key_env_var %||% "OPENAI_API_KEY",
+    .compatible = !use_auth,
+    ...
+  )
+}
+
 #' @rdname chat_completions_chat
 #' @export
 chat_completions <- create_provider_function(
   .name = "chat_completions",
-  chat = chat_completions_chat
+  chat = chat_completions_chat,
+  build = chat_completions_build_chat_request
 )

@@ -1,6 +1,6 @@
 Package: tidyllm
 Title: Tidy Integration of Large Language Models
-Version: 0.5.2
+Version: 0.6.0
 Authors@R: c(
     person("Eduard", "Brüll", NULL, "eduard.bruell@zew.de", role = c("aut", "cre")),
     person("Jia", "Zhang", NULL, NULL, role = "ctb")
@@ -12,26 +12,29 @@ BugReports: https://github.com/edubruell/tidyllm/issues
 Encoding: UTF-8
 RoxygenNote: 7.3.3
 VignetteBuilder: knitr
-Suggests: knitr, rmarkdown, testthat (>= 3.0.0), tidyverse, httptest2,
-        httpuv, ellmer (>= 0.4.0)
-Imports: S7 (>= 0.2.0), base64enc, glue, jsonlite, curl, httr2 (>=
-        1.1.1), lubridate, purrr, rlang, stringr, grDevices, pdftools,
-        tibble, cli, png, lifecycle
+Suggests: later, shiny, wooldridge, promises, knitr, rmarkdown,
+        testthat (>= 3.0.0), tidyverse, httptest2, httpuv, ellmer (>=
+        0.4.0)
+Imports: S7 (>= 0.2.0), base64enc, glue, jsonlite, coro, curl, httr2
+        (>= 1.1.1), lubridate, purrr, rlang, stringr, grDevices,
+        pdftools, tibble, cli, png, lifecycle
 Collate: 'tidyllm-package.R' 'utilites.R' 'embedding_helpers.R'
-        'LLMMessage.R' 'APIProvider.R' 'llm_message.R' 'llm_verbs.R'
-        'media.R' 'message_retrieval.R' 'perform_api_requests.R'
-        'rate_limits.R' 'tidyllm_schema.R' 'tools.R'
-        'api_chat_completions.R' 'api_openai.R' 'api_azure_openai.R'
-        'api_groq.R' 'api_mistral.R' 'api_perplexity.R'
-        'api_deepseek.R' 'api_voyage.R' 'api_ollama.R' 'api_claude.R'
-        'api_gemini.R' 'api_ellmer.R' 'api_openrouter.R'
-        'api_llamacpp.R' 'pdfbatch.R' 'zzz.R'
+        'LLMMessage.R' 'APIProvider.R' 'stream_pump.R'
+        'chat_pipeline.R' 'async_chat.R' 'parallel_chat.R'
+        'example_app.R' 'llm_message.R' 'llm_verbs.R' 'media.R'
+        'message_retrieval.R' 'perform_api_requests.R' 'rate_limits.R'
+        'tidyllm_schema.R' 'tools.R' 'api_chat_completions.R'
+        'api_openai.R' 'api_azure_openai.R' 'api_groq.R'
+        'api_mistral.R' 'api_perplexity.R' 'api_deepseek.R'
+        'api_voyage.R' 'api_ollama.R' 'api_claude.R' 'api_gemini.R'
+        'api_ellmer.R' 'api_openrouter.R' 'api_llamacpp.R' 'pdfbatch.R'
+        'zzz.R'
 Depends: R (>= 4.2.0)
 Config/testthat/edition: 3
 NeedsCompilation: no
-Packaged: 2026-07-30 14:24:45 UTC; ebr
+Packaged: 2026-09-08 08:43:49 UTC; ebr
 Author: Eduard Brüll [aut, cre],
   Jia Zhang [ctb]
 Maintainer: Eduard Brüll <eduard.bruell@zew.de>
 Repository: CRAN
-Date/Publication: 2026-07-30 16:20:02 UTC
+Date/Publication: 2026-09-08 09:00:02 UTC

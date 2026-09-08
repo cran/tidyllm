@@ -100,46 +100,93 @@ method(parse_chat_response, list(api_gemini,class_list)) <- function(.api,.conte
 }
 
 
-#' A method to handle streaming requests for Gemini
+#' Parse one Gemini SSE event
+#'
+#' Gemini streams ordinary SSE only when the request carries `alt=sse`. Without
+#' it the endpoint returns a pretty-printed JSON array streamed in chunks, with
+#' no SSE framing at all, which is why tidyllm buffered the text and pattern
+#' matched it before 0.6.0. The request builder now always sends `alt=sse`, so
+#' the buffer-and-match parser is gone.
+#'
+#' Parts carrying `thought = TRUE` are thinking output, not reply text, and must
+#' be classified rather than concatenated into the reply.
 #'
 #' @noRd
-method(handle_stream,list(api_gemini,new_S3_class("httr2_response"))) <- function(.api,.stream_response) {
-  stream_data <- ""
-  current_buffer <-  ""
-  repeat {
-    stream_chunk   <- httr2::resp_stream_lines(.stream_response)
-    stream_data    <- paste0(stream_data,stream_chunk)
-    current_buffer <- paste0(current_buffer,stream_chunk) 
-    
-    parts_section <- stringr::str_extract(current_buffer, 
-                                          '"parts":\\s*\\[\\s*\\{[^\\}]*\\}\\s*\\]')
-    
-    if(!is.na(parts_section)){
-      current_part <- jsonlite::fromJSON(paste0("{",parts_section,"}"))
-      stream_response <- current_part$parts$text
-      cat(stream_response)
-      utils::flush.console()
-      current_buffer <-  ""
-    }
-    
-    # Skip empty chunks
-    if (httr2::resp_stream_is_complete(.stream_response)) {
-      close(.stream_response)
-      message("\n---------\nStream finished\n---------\n")
-      break
+method(parse_stream_event, api_gemini) <- function(.api, .chunk) {
+  parsed <- parse_stream_json(.chunk$data)
+  if (is.null(parsed)) return(stream_event("noop"))
+
+  if (!is.null(parsed$error)) {
+    detail <- parsed$error$message %||% "unknown error"
+    return(stream_event("error", error = detail, keep = TRUE, event = parsed))
+  }
+
+  candidate <- parsed$candidates[[1]] %||% NULL
+  # A finishReason of any kind ends the stream. Gemini sends the usage metadata
+  # on that same event, so it is kept like every other one.
+  done <- !is.null(candidate$finishReason)
+
+  parts    <- candidate$content$parts %||% list()
+  is_think <- vapply(parts, function(p) isTRUE(p$thought), logical(1))
+  text     <- paste0(
+    vapply(parts[!is_think], function(p) p$text %||% "", character(1)),
+    collapse = ""
+  )
+
+  kind <- if (nzchar(text)) "text" else if (any(is_think)) "thinking" else "meta"
+  stream_event(kind, text = text, done = done, keep = TRUE, event = parsed)
+}
+
+#' Rebuild a Gemini candidate body from its stream events
+#'
+#' Gemini splits a response across chunks but never splits a part: each chunk
+#' carries whole parts, and `functionCall$args` arrives as a parsed object rather
+#' than a JSON string. So the parts are concatenated in arrival order and handed
+#' back untouched, which also preserves the `thoughtSignature` that
+#' `append_tool_messages()` has to send back or the continued turn is rejected.
+#'
+#' Consecutive text parts are merged, because a caller reading `parts` expects
+#' the shape of a blocking response, where the text is one part and not one per
+#' chunk.
+#'
+#' @noRd
+method(assemble_stream_body, list(api_gemini, class_list)) <- function(.api, .events) {
+  parts     <- list()
+  candidate <- list()
+  envelope  <- list()
+
+  for (event in .events) {
+    envelope <- merge_stream_envelope(
+      envelope, event, c("usageMetadata", "modelVersion", "responseId")
+    )
+
+    if (length(event$candidates) == 0) next
+    cand <- event$candidates[[1]]
+    candidate <- merge_stream_envelope(
+      candidate, cand,
+      c("finishReason", "index", "safetyRatings", "groundingMetadata",
+        "citationMetadata")
+    )
+
+    for (part in cand$content$parts %||% list()) {
+      last <- if (length(parts) > 0) parts[[length(parts)]] else NULL
+      mergeable <- !is.null(part$text) && !isTRUE(part$thought) &&
+        !is.null(last) && !is.null(last$text) && !isTRUE(last$thought) &&
+        identical(names(last), names(part))
+
+      if (mergeable) {
+        parts[[length(parts)]]$text <- paste0(last$text, part$text)
+      } else {
+        parts <- append(parts, list(part))
+      }
     }
   }
-  stream_data_parsed <- jsonlite::fromJSON(stream_data)
-  stream_text <- stream_data_parsed$candidates |> 
-    purrr::map_chr(~.x$content$parts[[1]]$text) |>
-    stringr::str_c(collapse = "")
-  
-  list(
-    reply = stream_text,
-    raw_data = list(parsed=stream_data_parsed)
-  )
+
+  candidate$content <- list(parts = parts, role = "model")
+
+  utils::modifyList(envelope, list(candidates = list(candidate)))
 }
-    
+
 
 
 #' A function to get metadata from Openai responses
@@ -164,30 +211,6 @@ method(extract_metadata, list(api_gemini,class_list))<- function(.api,.response)
     )
   )
 }  
-
-#' A function to get metadata from Openai streaming responses
-#'
-#' @noRd
-method(extract_metadata_stream, list(api_gemini,class_list))<- function(.api,.stream_raw_data) {
-  parsed_stream_data <- .stream_raw_data$parsed
-  final_stream_chunk <- parsed_stream_data[nrow(parsed_stream_data),]
-
-  list(
-    model             = final_stream_chunk$modelVersion,
-    timestamp         = lubridate::as_datetime(lubridate::now()),
-    prompt_tokens     = final_stream_chunk$usageMetadata$promptTokenCount,
-    completion_tokens = final_stream_chunk$usageMetadata$candidatesTokenCount,
-    total_tokens      = final_stream_chunk$usageMetadata$totalTokenCount,
-    cached_tokens         = as_token_count(final_stream_chunk$usageMetadata$cachedContentTokenCount),
-    cache_creation_tokens = NA_integer_,
-    stream            = TRUE,
-    specific_metadata = list(
-      warning    = "Gemini outputs different metadata for streaming and non-streaming responses",
-      token_details = final_stream_chunk$usageMetadata
-    ) 
-  )
-}  
-
 
 #' Method to convert a tidyllm TOOL definition to the expected input for Gemini
 #'
@@ -408,6 +431,34 @@ gemini_chat <- function(.llm,
                    .verbose = FALSE,
                    .stream = FALSE,
                    .max_tool_rounds = 10) {
+  built <- do.call(gemini_build_chat_request, mget(names(formals())), quote = TRUE)
+  run_chat_pipeline(built, .dry_run)
+}
+
+#' Build a Gemini chat request without performing it
+#'
+#' @noRd
+gemini_build_chat_request <- function(.llm,
+                   .model = "gemini-3.6-flash",
+                   .fileid = NULL,
+                   .temperature = NULL,
+                   .max_output_tokens = NULL,
+                   .top_p = NULL,
+                   .top_k = NULL,
+                   .grounding_threshold = NULL,
+                   .presence_penalty = NULL,
+                   .frequency_penalty = NULL,
+                   .stop_sequences = NULL,
+                   .safety_settings = NULL,
+                   .json_schema = NULL,
+                   .tools = NULL,
+                   .thinking_budget = NULL,
+                   .timeout = 120,
+                   .dry_run = FALSE,
+                   .max_tries = 3,
+                   .verbose = FALSE,
+                   .stream = FALSE,
+                   .max_tool_rounds = 10) {
 
   # Validate inputs
   c(
@@ -430,7 +481,6 @@ gemini_chat <- function(.llm,
     "Input .verbose must be logical" = is.logical(.verbose),
     "Input .stream must be logical" = is.logical(.verbose),
     "Input .tools must be NULL, a TOOL object, or a list of TOOL objects" = is.null(.tools) || S7_inherits(.tools, TOOL) || (is.list(.tools) && all(purrr::map_lgl(.tools, ~ S7_inherits(.x, TOOL)))),
-    "Streaming is not supported for requests with tool calls" = is.null(.tools) || !isTRUE(.stream),
     ".max_tool_rounds must be a positive integer" = is_integer_valued(.max_tool_rounds) && .max_tool_rounds >= 1,
     ".thinking_budget must be NULL or a non-negative integer" = is.null(.thinking_budget) || (is_integer_valued(.thinking_budget) && .thinking_budget >= 0)
   ) |>
@@ -444,9 +494,12 @@ gemini_chat <- function(.llm,
   
   # Deprecated .fileid: convert to tidyllm_file objects and inject into last message
   if (!is.null(.fileid)) {
+    # See the note on the matching call in R/api_claude.R: the builder is one
+    # frame deeper than gemini_chat(), so user_env must be passed explicitly.
     lifecycle::deprecate_warn(
       "0.5.0", "gemini(.fileid=)",
-      details = "Pass tidyllm_file objects via .files on llm_message() instead."
+      details = "Pass tidyllm_file objects via .files on llm_message() instead.",
+      user_env = rlang::caller_env(2)
     )
     file_objs <- lapply(.fileid, function(id) {
       meta <- tryCatch(gemini_file_metadata(id), error = function(e) NULL)
@@ -544,37 +597,32 @@ gemini_chat <- function(.llm,
   
   if(.stream==FALSE) request_type <- ":generateContent"
   if(.stream==TRUE)  request_type <- ":streamGenerateContent"
-  
+
   # Build the request
   request <- httr2::request("https://generativelanguage.googleapis.com") |>
     httr2::req_url_path(paste0("/v1beta/models/", .model, request_type)) |>
-    httr2::req_url_query(key = api_key) |>
+    httr2::req_headers_redacted(`x-goog-api-key` = api_key) |>
     httr2::req_headers(`Content-Type` = "application/json") |>
     httr2::req_body_json(request_body)
-  
-  if (.dry_run) return(request)
-  
-  # Perform the API request
-  response <- perform_chat_request(request,api_obj,.stream,.timeout,.max_tries)
-  
-  if (.stream == FALSE && !is.null(raw_tools_def)) {
-    response <- process_tool_loop(
-      .api = api_obj,
-      .response = response,
-      .tools_def = raw_tools_def,
-      .request_body = request_body,
-      .request = request,
-      .timeout = .timeout,
-      .max_tries = .max_tries,
-      .max_tool_rounds = .max_tool_rounds
-    )
-  }
-  
-  add_message(.llm     = .llm,
-              .role    = "assistant", 
-              .content = response$assistant_reply, 
-              .json    = json,
-              .meta    = response$meta)
+
+  # Without alt=sse the streaming endpoint returns a pretty-printed JSON array
+  # in chunks, with no SSE framing at all; with it, ordinary text/event-stream.
+  # This one query parameter is what lets the shared pump read Gemini.
+  if (.stream) request <- httr2::req_url_query(request, alt = "sse")
+
+  new_chat_request(
+    .request          = request,
+    .api              = api_obj,
+    .llm              = .llm,
+    .body             = request_body,
+    .tools_def        = raw_tools_def,
+    .json             = json,
+    .mode             = if (isTRUE(.stream)) "stream" else "value",
+    .timeout          = .timeout,
+    .max_tries        = .max_tries,
+    .max_tool_rounds  = .max_tool_rounds,
+    .verbose          = .verbose
+  )
 }
 
 
@@ -601,7 +649,7 @@ gemini_upload_file <- function(.file_path) {
   
   # Step 1: Initiate the upload and get the resumable upload URL
   init_response <- httr2::request("https://generativelanguage.googleapis.com/upload/v1beta/files") |>
-    httr2::req_url_query(key = api_key) |>
+    httr2::req_headers_redacted(`x-goog-api-key` = api_key) |>
     httr2::req_headers(
       `X-Goog-Upload-Protocol` = "resumable",
       `X-Goog-Upload-Command` = "start",
@@ -658,7 +706,7 @@ gemini_file_metadata <- function(.file_name) {
   
   # Request to get file metadata
   response <- httr2::request(paste0("https://generativelanguage.googleapis.com/v1beta/", .file_name)) |>
-    httr2::req_url_query(key = api_key) |>
+    httr2::req_headers_redacted(`x-goog-api-key` = api_key) |>
     httr2::req_perform() |>
     httr2::resp_body_json()
   
@@ -697,7 +745,8 @@ gemini_list_files <- function(.page_size = 10,
   
   # Request to list files
   response <- httr2::request("https://generativelanguage.googleapis.com/v1beta/files") |>
-    httr2::req_url_query(key = api_key, pageSize = .page_size, pageToken = .page_token) |>
+    httr2::req_headers_redacted(`x-goog-api-key` = api_key) |>
+    httr2::req_url_query(pageSize = .page_size, pageToken = .page_token) |>
     httr2::req_perform() |>
     httr2::resp_body_json()
   
@@ -733,7 +782,7 @@ gemini_delete_file <- function(.file_name) {
   
   # Request to delete the file
   httr2::request(paste0("https://generativelanguage.googleapis.com/v1beta/", .file_name)) |>
-    httr2::req_url_query(key = api_key) |>
+    httr2::req_headers_redacted(`x-goog-api-key` = api_key) |>
     httr2::req_method("DELETE") |>
     httr2::req_perform()
   
@@ -793,7 +842,7 @@ gemini_embedding <- function(.input,
   # Build the request
   request <-httr2::request("https://generativelanguage.googleapis.com") |>
     httr2::req_url_path(paste0("/v1beta/models/", .model, ":batchEmbedContents")) |>
-    httr2::req_url_query(key = api_key) |>
+    httr2::req_headers_redacted(`x-goog-api-key` = api_key) |>
     httr2::req_headers(`Content-Type` = "application/json") |>
     httr2::req_body_json(request_body)
   
@@ -969,7 +1018,7 @@ send_gemini_batch <- function(.llms,
   
   req <- httr2::request("https://generativelanguage.googleapis.com") |>
     httr2::req_url_path(paste0("/v1beta/models/", .model, ":batchGenerateContent")) |>
-    httr2::req_url_query(key = api_key) |>
+    httr2::req_headers_redacted(`x-goog-api-key` = api_key) |>
     httr2::req_body_json(body)
   
   if (.dry_run) return(req)
@@ -1035,7 +1084,7 @@ check_gemini_batch <- function(.llms = NULL,
   op_path <- if (!startsWith(.batch_id, "/v1beta/")) paste0("/v1beta/", .batch_id) else .batch_id
   req <- httr2::request("https://generativelanguage.googleapis.com") |>
     httr2::req_url_path(op_path) |>
-    httr2::req_url_query(key = api_key)
+    httr2::req_headers_redacted(`x-goog-api-key` = api_key)
   if (.dry_run) return(req)
   resp <- perform_generic_request(req, .timeout, .max_tries)
   content <- resp$content
@@ -1070,8 +1119,8 @@ list_gemini_batches <- function(.filter    = NULL,
   if (api_key == "") stop("Google API key is not set (GOOGLE_API_KEY).")
   req <- httr2::request("https://generativelanguage.googleapis.com") |>
     httr2::req_url_path("/v1beta/batches") |>
+    httr2::req_headers_redacted(`x-goog-api-key` = api_key) |>
     httr2::req_url_query(
-      key      = api_key,
       filter   = .filter,
       pageSize = .page_size
     )
@@ -1135,7 +1184,7 @@ fetch_gemini_batch <- function(.llms,
   # Build GET request for batch status
   req <- httr2::request("https://generativelanguage.googleapis.com") |>
     httr2::req_url_path(op_path) |>
-    httr2::req_url_query(key = api_key) |>
+    httr2::req_headers_redacted(`x-goog-api-key` = api_key) |>
     httr2::req_headers(`Content-Type` = "application/json")
   
   if (.dry_run) return(req)
@@ -1168,7 +1217,8 @@ fetch_gemini_batch <- function(.llms,
     file_path <- paste0("/download/v1beta/", response$responsesFile, ":download")
     download_req <- httr2::request("https://generativelanguage.googleapis.com") |>
       httr2::req_url_path(file_path) |>
-      httr2::req_url_query(key = api_key, alt = "media")
+      httr2::req_headers_redacted(`x-goog-api-key` = api_key) |>
+      httr2::req_url_query(alt = "media")
     download_resp <- perform_generic_request(download_req, .timeout, .max_tries)
     responses_lines <- strsplit(httr2::resp_body_string(download_resp$raw_response), "\n")[[1]]
     responses <- lapply(responses_lines, function(line) if (nzchar(line)) jsonlite::fromJSON(line) else NULL)
@@ -1229,7 +1279,7 @@ gemini_list_models <- function(.timeout = 60,
   
   request <- httr2::request("https://generativelanguage.googleapis.com") |>
     httr2::req_url_path("/v1beta/models") |>
-    httr2::req_url_query(key = api_key)
+    httr2::req_headers_redacted(`x-goog-api-key` = api_key)
   
   if (.dry_run) {
     return(request)
@@ -1280,7 +1330,7 @@ gemini_upload_file_verb <- function(.path, .called_from = NULL, ...) {
   display_name <- basename(.path)
 
   init_response <- httr2::request("https://generativelanguage.googleapis.com/upload/v1beta/files") |>
-    httr2::req_url_query(key = api_key) |>
+    httr2::req_headers_redacted(`x-goog-api-key` = api_key) |>
     httr2::req_headers(
       `X-Goog-Upload-Protocol` = "resumable",
       `X-Goog-Upload-Command` = "start",
@@ -1320,7 +1370,8 @@ gemini_list_files_verb <- function(.called_from = NULL, .page_size = 10, .page_t
   api_key <- Sys.getenv("GOOGLE_API_KEY")
   if (api_key == "") stop("GOOGLE_API_KEY is not set.")
   req <- httr2::request("https://generativelanguage.googleapis.com/v1beta/files") |>
-    httr2::req_url_query(key = api_key, pageSize = .page_size)
+    httr2::req_headers_redacted(`x-goog-api-key` = api_key) |>
+    httr2::req_url_query(pageSize = .page_size)
   if (!is.null(.page_token)) req <- httr2::req_url_query(req, pageToken = .page_token)
   resp <- req |> httr2::req_perform() |> httr2::resp_body_json()
   if (is.null(resp$files)) return(tibble::tibble(file_id=character(), filename=character(),
@@ -1343,7 +1394,7 @@ gemini_file_info_verb <- function(.file_id, .called_from = NULL, ...) {
   api_key <- Sys.getenv("GOOGLE_API_KEY")
   if (api_key == "") stop("GOOGLE_API_KEY is not set.")
   resp <- httr2::request(paste0("https://generativelanguage.googleapis.com/v1beta/", .file_id)) |>
-    httr2::req_url_query(key = api_key) |>
+    httr2::req_headers_redacted(`x-goog-api-key` = api_key) |>
     httr2::req_perform() |>
     httr2::resp_body_json()
   tibble::tibble(
@@ -1363,7 +1414,7 @@ gemini_delete_file_verb <- function(.file_id, .called_from = NULL, ...) {
   api_key <- Sys.getenv("GOOGLE_API_KEY")
   if (api_key == "") stop("GOOGLE_API_KEY is not set.")
   httr2::request(paste0("https://generativelanguage.googleapis.com/v1beta/", .file_id)) |>
-    httr2::req_url_query(key = api_key) |>
+    httr2::req_headers_redacted(`x-goog-api-key` = api_key) |>
     httr2::req_method("DELETE") |>
     httr2::req_perform()
   message("File ", .file_id, " has been successfully deleted.")
@@ -1394,6 +1445,7 @@ gemini_delete_file_verb <- function(.file_id, .called_from = NULL, ...) {
 gemini <- create_provider_function(
   .name = "gemini",
   chat = gemini_chat,
+  build = gemini_build_chat_request,
   embed = gemini_embedding,
   send_batch = send_gemini_batch,
   check_batch = check_gemini_batch,

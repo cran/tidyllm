@@ -4,6 +4,20 @@
 #' @noRd
 api_openrouter <- new_class("OpenRouter", api_chat_completions)
 
+#' OpenRouter speaks the ChatCompletions wire format but returns none of OpenAI's
+#' `x-ratelimit-*` headers, so the inherited parser would raise and
+#' `track_rate_limit()` would turn that into a warning on every call.
+#'
+#' @noRd
+method(ratelimit_from_header, list(api_openrouter, class_any)) <- function(.api, .headers) NULL
+
+#' OpenRouter exposes no way to request logprobs, so the inherited ChatCompletions
+#' parser has nothing to find.
+#'
+#' @noRd
+method(parse_logprobs, list(api_openrouter, class_any)) <- function(.api, .input) NULL
+
+
 
 #' Extract metadata from OpenRouter chat responses
 #'
@@ -155,6 +169,35 @@ openrouter_chat <- function(.llm,
                             .dry_run = FALSE,
                             .max_tries = 3,
                             .max_tool_rounds = 10) {
+  built <- do.call(openrouter_build_chat_request, mget(names(formals())), quote = TRUE)
+  run_chat_pipeline(built, .dry_run)
+}
+
+#' Build a OpenRouter chat request without performing it
+#'
+#' @noRd
+openrouter_build_chat_request <- function(.llm,
+                            .model = "anthropic/claude-sonnet-5",
+                            .max_tokens = 2048,
+                            .temperature = NULL,
+                            .top_p = NULL,
+                            .frequency_penalty = NULL,
+                            .presence_penalty = NULL,
+                            .stop = NULL,
+                            .stream = FALSE,
+                            .json_schema = NULL,
+                            .tools = NULL,
+                            .tool_choice = NULL,
+                            .reasoning = NULL,
+                            .provider = NULL,
+                            .route = NULL,
+                            .models = NULL,
+                            .api_url = "https://openrouter.ai",
+                            .timeout = 60,
+                            .verbose = FALSE,
+                            .dry_run = FALSE,
+                            .max_tries = 3,
+                            .max_tool_rounds = 10) {
 
   c(
     "Input .llm must be an LLMMessage object" = S7_inherits(.llm, LLMMessage),
@@ -170,7 +213,6 @@ openrouter_chat <- function(.llm,
     "Streaming is not supported for requests with structured outputs" = is.null(.json_schema) || !isTRUE(.stream),
     "Input .tools must be NULL, a TOOL object, or a list of TOOL objects" = is.null(.tools) || S7_inherits(.tools, TOOL) || (is.list(.tools) && all(purrr::map_lgl(.tools, ~ S7_inherits(.x, TOOL)))),
     "Input .tool_choice must be NULL or one of 'none', 'auto', 'required'" = is.null(.tool_choice) | (.tool_choice %in% c("none", "auto", "required")),
-    "Streaming is not supported for requests with tool calls" = is.null(.tools) || !isTRUE(.stream),
     "Input .reasoning must be NULL or a named list" = is.null(.reasoning) | is.list(.reasoning),
     "Input .provider must be NULL or a named list" = is.null(.provider) | is.list(.provider),
     "Input .route must be NULL or a character string" = is.null(.route) | is.character(.route),
@@ -239,30 +281,19 @@ openrouter_chat <- function(.llm,
     ) |>
     httr2::req_body_json(data = request_body)
 
-  if (.dry_run) {
-    return(request)
-  }
-
-  response <- perform_chat_request(request, api_obj, .stream, .timeout, .max_tries)
-
-  if (.stream == FALSE && !is.null(tools_def)) {
-    response <- process_tool_loop(
-      .api = api_obj,
-      .response = response,
-      .tools_def = tools_def,
-      .request_body = request_body,
-      .request = request,
-      .timeout = .timeout,
-      .max_tries = .max_tries,
-      .max_tool_rounds = .max_tool_rounds
-    )
-  }
-
-  add_message(.llm     = .llm,
-              .role    = "assistant",
-              .content = response$assistant_reply,
-              .json    = json,
-              .meta    = response$meta)
+  new_chat_request(
+    .request          = request,
+    .api              = api_obj,
+    .llm              = .llm,
+    .body             = request_body,
+    .tools_def        = tools_def,
+    .json             = json,
+    .mode             = if (isTRUE(.stream)) "stream" else "value",
+    .timeout          = .timeout,
+    .max_tries        = .max_tries,
+    .max_tool_rounds  = .max_tool_rounds,
+    .verbose          = .verbose
+  )
 }
 
 
@@ -515,6 +546,7 @@ openrouter_embedding <- function(.input,
 openrouter <- create_provider_function(
   .name = "openrouter",
   chat = openrouter_chat,
+  build = openrouter_build_chat_request,
   embed = openrouter_embedding,
   list_models = openrouter_list_models
 )

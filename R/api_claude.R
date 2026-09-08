@@ -198,63 +198,6 @@ method(extract_metadata, list(api_claude,class_list))<- function(.api,.response)
   )
 }
 
-#' A function to get metadata from claude streaming responses
-#'
-#' @noRd
-method(extract_metadata_stream, list(api_claude,class_list))<- function(.api,.stream_raw_data) {
-  start_message <- .stream_raw_data |>
-    purrr::keep(~.x$type=="message_start") |>
-    unlist(recursive = FALSE)
-
-  # select message_delta by type rather than by position: a ping event can arrive
-  # between the last delta and message_stop
-  delta_messages <- .stream_raw_data |>
-    purrr::keep(~ identical(.x$type, "message_delta"))
-
-  last_message <- if (length(delta_messages) > 0) {
-    delta_messages[[length(delta_messages)]] |> unlist(recursive = FALSE)
-  } else {
-    .stream_raw_data[[length(.stream_raw_data) - 1]] |> unlist(recursive = FALSE)
-  }
-
-  start_usage <- start_message$message$usage
-  output_tokens <- as_token_count(last_message$usage.output_tokens)
-  input_tokens  <- as_token_count(start_usage$input_tokens)
-
-  thinking_text <- .stream_raw_data |>
-    purrr::keep(~ identical(.x$type, "content_block_delta") &&
-                  identical(.x$delta$type, "thinking_delta")) |>
-    purrr::map_chr(~ .x$delta$thinking %||% "") |>
-    paste(collapse = "")
-
-  thinking_signature <- .stream_raw_data |>
-    purrr::keep(~ identical(.x$type, "content_block_delta") &&
-                  identical(.x$delta$type, "signature_delta")) |>
-    purrr::map_chr(~ .x$delta$signature %||% "") |>
-    paste(collapse = "")
-
-  list(
-    model             = start_message$message$model,
-    timestamp         = lubridate::as_datetime(lubridate::now()),
-    prompt_tokens     = input_tokens,
-    completion_tokens = output_tokens,
-    total_tokens      = sum(c(input_tokens, output_tokens), na.rm = TRUE),
-    cached_tokens         = as_token_count(start_usage$cache_read_input_tokens),
-    cache_creation_tokens = as_token_count(start_usage$cache_creation_input_tokens),
-    stream            = TRUE,
-    specific_metadata = list(
-      stop_reason        = last_message$delta.stop_reason,
-      id                 = start_message$message$id,
-      stop_sequence      = last_message$delta.stop_sequence,
-      cache_creation_input_tokens = start_usage$cache_creation_input_tokens,
-      cache_read_input_tokens     = start_usage$cache_read_input_tokens,
-      thinking           = if (nzchar(thinking_text)) thinking_text else NULL,
-      signature          = if (nzchar(thinking_signature)) thinking_signature else NULL
-    )
-  )
-}
-
-
 #Claude-specific method to format tool calls for the API
 method(tools_to_api, list(api_claude, class_list)) <- function(.api, .tools) {
   purrr::map(.tools, function(tool) {
@@ -334,55 +277,143 @@ method(run_tool_calls, list(api_claude, class_list, class_list)) <- function(.ap
   )
 }
 
-#' A method to handle streaming requests for Anthropic
-#' request
+#' Parse one Anthropic SSE event
+#'
+#' Claude emits typed events; `message_stop` is the terminal one and is itself
+#' kept, because the assembler folds every event back into one body. Thinking
+#' deltas arrive as their own delta type at any content position, so they are
+#' classified rather than mistaken for output text.
 #'
 #' @noRd
-method(handle_stream,list(api_claude,new_S3_class("httr2_response"))) <- function(.api,.stream_response) {
-  stream_text <- ""
-  stream_data <- list()
-  repeat {
-    stream_chunk <- httr2::resp_stream_sse(.stream_response)
-    
-    # Skip empty chunks
-    if (is.null(stream_chunk$data) || !nzchar(stream_chunk$data)) {
-      next  
-    }
-    
+method(parse_stream_event, api_claude) <- function(.api, .chunk) {
+  parsed <- parse_stream_json(.chunk$data)
+  if (is.null(parsed)) return(stream_event("noop"))
 
-    # Try to parse the JSON content
-    parsed_event <- tryCatch(
-      jsonlite::fromJSON(stream_chunk$data, simplifyVector = FALSE, simplifyDataFrame = FALSE),
-      error = function(e) {
-        message("Failed to parse JSON: ", e$message)
-        return(NULL)
-      }
-    )
-    
-    if (!is.null(parsed_event)) {
-      stream_data <- append(stream_data,list(parsed_event))
-      if (parsed_event$type == "message_stop") {
-        close(.stream_response)
-        message("\n---------\nStream finished\n---------\n")
-        break
-      }
-      
-      delta_content <- parsed_event$delta$text
-      if (!is.null(delta_content)) {
-          stream_text <- paste0(stream_text, delta_content)
-          cat(delta_content)
-          utils::flush.console()
-        }
-      }
+  type <- parsed$type %||% ""
+
+  if (type == "error") {
+    detail <- parsed$error$message %||% parsed$error$type %||% "unknown error"
+    return(stream_event("error", error = detail, keep = TRUE, event = parsed))
   }
-  
-  list(
-    reply = stream_text,
-    raw_data = stream_data
-  )
+
+  if (type == "message_stop") {
+    return(stream_event("meta", done = TRUE, keep = TRUE, event = parsed))
+  }
+
+  delta_type <- parsed$delta$type %||% ""
+  if (delta_type == "thinking_delta") {
+    return(stream_event("thinking", text = parsed$delta$thinking,
+                        keep = TRUE, event = parsed))
+  }
+
+  text <- parsed$delta$text
+  if (!is.null(text)) {
+    return(stream_event("text", text = text, keep = TRUE, event = parsed))
+  }
+
+  stream_event("meta", keep = TRUE, event = parsed)
 }
 
+#' Rebuild a Claude message body from its stream events
+#'
+#' Claude is the only provider that genuinely requires accumulation: tool
+#' arguments arrive as `input_json_delta` fragments that split mid-token, and the
+#' fragments of two concurrent tool calls interleave. They are therefore
+#' accumulated per content block index, never into one buffer; welding every
+#' fragment of this package's own recorded two-call stream together produces
+#' invalid JSON, which `local_tests/features/stream_tools_replay.R` asserts.
+#'
+#' @noRd
+method(assemble_stream_body, list(api_claude, class_list)) <- function(.api, .events) {
+  blocks  <- list()
+  indices <- character()
+  message <- list(role = "assistant", type = "message", content = list())
 
+  for (event in .events) {
+    type <- event$type %||% ""
+
+    if (type == "message_start") {
+      start   <- event$message %||% list()
+      message <- utils::modifyList(message, start[setdiff(names(start), "content")])
+
+    } else if (type == "content_block_start") {
+      # Every block is addressed by its index, so an event without one cannot be
+      # placed. `as.character(NULL)` is `character(0)`, and assigning at that key
+      # raises an opaque subscript error in the middle of a stream the user is
+      # already watching, so it is skipped instead.
+      if (length(event$index) != 1) next
+      key <- as.character(event$index)
+      # A repeated start for the same index replaces the block rather than
+      # appending a second one; two blocks sharing a tool_use id are rejected
+      # when they are sent back.
+      if (is.null(blocks[[key]])) indices <- c(indices, key)
+      blocks[[key]] <- list(block = event$content_block %||% list(),
+                            text  = character(),
+                            json  = character())
+
+    } else if (type == "content_block_delta") {
+      if (length(event$index) != 1) next
+      key <- as.character(event$index)
+      if (is.null(blocks[[key]])) next
+      delta <- event$delta %||% list()
+
+      switch(
+        delta$type %||% "",
+        text_delta       = blocks[[key]]$text <- c(blocks[[key]]$text, delta$text %||% ""),
+        thinking_delta   = blocks[[key]]$text <- c(blocks[[key]]$text, delta$thinking %||% ""),
+        input_json_delta = blocks[[key]]$json <- c(blocks[[key]]$json, delta$partial_json %||% ""),
+        # Concatenated rather than overwritten: a signature that kept only its
+        # last fragment is rejected when the turn continues.
+        signature_delta  = blocks[[key]]$sig <- c(blocks[[key]]$sig, delta$signature %||% ""),
+        NULL
+      )
+
+    } else if (type == "message_delta") {
+      message <- utils::modifyList(message, purrr::compact(event$delta %||% list()))
+      if (!is.null(event$usage)) {
+        message$usage <- utils::modifyList(message$usage %||% list(),
+                                           purrr::compact(event$usage))
+      }
+    }
+  }
+
+  message$content <- lapply(indices, function(key) {
+    acc   <- blocks[[key]]
+    block <- acc$block
+    joined <- paste0(acc$text, collapse = "")
+    if (length(acc$sig) > 0) block$signature <- paste0(acc$sig, collapse = "")
+
+    switch(
+      block$type %||% "",
+      text     = block$text     <- joined,
+      thinking = block$thinking <- joined,
+      # Built-in tools such as `claude_websearch()` stream their arguments the
+      # same way and are sent back the same way, so they take the same branch.
+      server_tool_use = ,
+      tool_use = {
+        args <- paste0(acc$json, collapse = "")
+        # No fragments at all means a tool called with no arguments. The `{}`
+        # that `content_block_start` already carries is kept rather than
+        # replaced, because it is a *named* empty list: an unnamed one
+        # serialises as `[]`, which the API rejects as not an object.
+        if (nzchar(args)) {
+          parsed <- tryCatch(jsonlite::fromJSON(args, simplifyVector = FALSE),
+                             error = function(e) NULL)
+          # A stream cut off mid-arguments (`max_tokens` reached during
+          # `input_json_delta`) leaves a JSON prefix. Erroring here would throw
+          # away a reply the user has already watched arrive, so the partial
+          # arguments are dropped and the turn ends on its own stop_reason, the
+          # same way the blocking path handles a truncated tool call.
+          if (!is.null(parsed)) block$input <- parsed
+        }
+      },
+      NULL
+    )
+    block
+  })
+
+  message
+}
 
 
 #' Collapse Claude content blocks into a single character string
@@ -530,6 +561,35 @@ claude_chat <- function(.llm,
                         .effort = NULL,
                         .cache = FALSE,
                         .max_tool_rounds = 10) {
+  built <- do.call(claude_build_chat_request, mget(names(formals())), quote = TRUE)
+  run_chat_pipeline(built, .dry_run)
+}
+
+#' Build a Claude chat request without performing it
+#'
+#' @noRd
+claude_build_chat_request <- function(.llm,
+                        .model = "claude-sonnet-5",
+                        .max_tokens = 2048,
+                        .temperature = NULL,
+                        .top_k = NULL,
+                        .top_p = NULL,
+                        .metadata = NULL,
+                        .stop_sequences = NULL,
+                        .tools = NULL,
+                        .json_schema = NULL,
+                        .file_ids = NULL,
+                        .api_url = "https://api.anthropic.com/",
+                        .verbose = FALSE,
+                        .max_tries = 3,
+                        .timeout = 60,
+                        .stream = FALSE,
+                        .dry_run = FALSE,
+                        .thinking = FALSE,
+                        .thinking_budget = 1024,
+                        .effort = NULL,
+                        .cache = FALSE,
+                        .max_tool_rounds = 10) {
   # Validate inputs to the Claude function
   c(
     ".llm must be an LLMMessage object" = S7_inherits(.llm, LLMMessage),
@@ -550,7 +610,6 @@ claude_chat <- function(.llm,
     ".stream must be logical" = is.logical(.stream),
     ".max_tries must be integer-valued numeric" = is_integer_valued(.max_tries),
     ".dry_run must be logical" = is.logical(.dry_run),
-    "Streaming is not supported for requests with tool calls" = is.null(.tools) || !isTRUE(.stream),
     ".json_schema must be NULL or a list or an ellmer type object" = is.null(.json_schema) | is.list(.json_schema) | is_ellmer_type(.json_schema),
     "Streaming is not supported for requests with structured outputs" = is.null(.json_schema) || !isTRUE(.stream),
     ".thinking must be logical" = is.logical(.thinking),
@@ -591,9 +650,15 @@ claude_chat <- function(.llm,
   
   # Deprecated .file_ids: convert to tidyllm_file objects and inject into last message
   if (!is.null(.file_ids)) {
+    # `user_env` is passed explicitly because this call sits in the builder, one
+    # frame deeper than the user-facing `claude_chat()`. lifecycle's default of
+    # caller_env(2) would resolve to the tidyllm namespace and append "the
+    # deprecated feature was likely used in the tidyllm package; please report
+    # the issue", telling users on a documented path to file a bug.
     lifecycle::deprecate_warn(
       "0.5.0", "claude(.file_ids=)",
-      details = "Pass tidyllm_file objects via .files on llm_message() instead."
+      details = "Pass tidyllm_file objects via .files on llm_message() instead.",
+      user_env = rlang::caller_env(2)
     )
     file_objs <- lapply(.file_ids, function(id)
       tidyllm_file(id = id, provider = "claude", mime_type = "", filename = id, uri = ""))
@@ -644,44 +709,22 @@ claude_chat <- function(.llm,
       `content-type` = "application/json; charset=utf-8",
       .redact = "x-api-key"
     ) |>
-    httr2::req_body_json(data = request_body)  
-  
-  # Return only the request object 
-  if (.dry_run) {
-    return(request)  
-  }
-  
-  response <- perform_chat_request(request, api_obj, .stream, .timeout)
-  
-  if (.stream == FALSE && !is.null(tools_def)) {
-    response <- process_tool_loop(
-      .api = api_obj,
-      .response = response,
-      .tools_def = tools_def,
-      .request_body = request_body,
-      .request = request,
-      .timeout = .timeout,
-      .max_tries = .max_tries,
-      .max_tool_rounds = .max_tool_rounds
-    )
-  }
-  
-  assistant_reply <- if (.stream) {
-    response$assistant_reply
-  } else {
-    collapse_claude_blocks(response$raw$content$content)
-  }
-  
-  track_rate_limit(api_obj, response$headers, .verbose)
-  
-  add_message(
-    .llm     = .llm,
-    .role    = "assistant",
-    .content = assistant_reply,
-    .json    = json,
-    .meta    = response$meta
+    httr2::req_body_json(data = request_body)
+
+  new_chat_request(
+    .request          = request,
+    .api              = api_obj,
+    .llm              = .llm,
+    .body             = request_body,
+    .tools_def        = tools_def,
+    .json             = json,
+    .mode             = if (isTRUE(.stream)) "stream" else "value",
+    .timeout          = .timeout,
+    .max_tries        = .max_tries,
+    .max_tool_rounds  = .max_tool_rounds,
+    .verbose          = .verbose
   )
-}  
+}
 
 #' Send a Batch of Messages to Claude API
 #'
@@ -1666,6 +1709,7 @@ claude_websearch <- function(.max_uses = NULL,
 claude <- create_provider_function(
   .name = "claude",
   chat = claude_chat,
+  build = claude_build_chat_request,
   send_batch = send_claude_batch,
   check_batch = check_claude_batch,
   list_batches = list_claude_batches,

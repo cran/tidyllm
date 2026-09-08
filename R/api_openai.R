@@ -125,83 +125,49 @@ method(extract_metadata, list(api_openai, class_list)) <- function(.api, .respon
   )
 }
 
-#' Extract metadata from OpenAI Responses API streaming data
+#' Parse one Responses API SSE event
+#'
+#' The Responses API embeds the event type as `type` inside the JSON data field
+#' rather than using SSE `event:` headers, and its event vocabulary is unrelated
+#' to Chat Completions. Only the terminal `response.completed` event is kept:
+#' it carries the whole response object, so nothing else is needed for metadata.
 #'
 #' @noRd
-method(extract_metadata_stream, list(api_openai, class_list)) <- function(.api, .stream_raw_data) {
-  # The response.completed event contains the full response object
-  completed <- purrr::keep(.stream_raw_data, ~ !is.null(.x$type) && .x$type == "response.completed")
+method(parse_stream_event, api_openai) <- function(.api, .chunk) {
+  parsed <- parse_stream_json(.chunk$data)
+  if (is.null(parsed)) return(stream_event("noop"))
 
-  if (length(completed) == 0) {
-    return(callNextMethod())
-  }
-
-  resp <- completed[[1]]$response
-  usage <- resp$usage %||% list()
-
-  list(
-    model             = resp$model,
-    timestamp         = lubridate::as_datetime(lubridate::now()),
-    prompt_tokens     = usage$input_tokens,
-    completion_tokens = usage$output_tokens,
-    total_tokens      = (usage$input_tokens %||% 0L) + (usage$output_tokens %||% 0L),
-    cached_tokens         = as_token_count(usage$input_tokens_details$cached_tokens),
-    cache_creation_tokens = NA_integer_,
-    stream            = TRUE,
-    specific_metadata = list(
-      response_id      = resp$id,
-      reasoning_tokens = usage$output_tokens_details$reasoning_tokens,
-      cached_tokens    = usage$input_tokens_details$cached_tokens
-    )
+  switch(
+    parsed$type %||% "",
+    "response.output_text.delta" =
+      stream_event("text", text = parsed$delta, event = parsed),
+    "response.completed" =
+      stream_event("meta", done = TRUE, keep = TRUE, event = parsed),
+    "response.failed" = {
+      detail <- parsed$response$error$message %||% "stream failed"
+      stream_event("error", error = detail, event = parsed)
+    },
+    "error" = {
+      detail <- parsed$message %||% parsed$error$message %||% "stream failed"
+      stream_event("error", error = detail, event = parsed)
+    },
+    stream_event("meta", event = parsed)
   )
 }
 
-#' Handle SSE streaming for OpenAI Responses API
+#' Rebuild a Responses API body from its stream events
 #'
-#' The Responses API embeds the event type as `type` inside the JSON data field
-#' rather than using SSE `event:` headers.
+#' Nothing to accumulate: the Responses API ends a stream with a
+#' `response.completed` event whose `response` field is the same object a
+#' blocking request returns, `output` array and fully-formed `function_call`
+#' items included. `parse_stream_event()` keeps that one event and discards the
+#' deltas, so this is a projection rather than an assembly.
 #'
 #' @noRd
-method(handle_stream, list(api_openai, new_S3_class("httr2_response"))) <- function(.api, .stream_response) {
-  stream_text <- ""
-  stream_data <- list()
-
-  repeat {
-    stream_chunk <- httr2::resp_stream_sse(.stream_response)
-
-    # NULL means no data available yet — keep reading
-    if (is.null(stream_chunk)) next
-
-    data_str <- stream_chunk$data
-    if (is.null(data_str) || !nzchar(data_str)) next
-
-    parsed <- tryCatch(
-      jsonlite::fromJSON(data_str, simplifyVector = FALSE),
-      error = function(e) NULL
-    )
-    if (is.null(parsed)) next
-
-    event_type <- parsed$type %||% ""
-
-    if (event_type == "response.output_text.delta") {
-      delta <- parsed$delta
-      if (!is.null(delta) && nzchar(delta)) {
-        stream_text <- paste0(stream_text, delta)
-        cat(delta)
-        utils::flush.console()
-      }
-    } else if (event_type == "response.completed") {
-      stream_data <- append(stream_data, list(parsed))
-      close(.stream_response)
-      message("\n---------\nStream finished\n---------\n")
-      break
-    } else if (event_type == "response.failed") {
-      close(.stream_response)
-      stop("OpenAI Responses API stream failed")
-    }
-  }
-
-  list(reply = stream_text, raw_data = stream_data)
+method(assemble_stream_body, list(api_openai, class_list)) <- function(.api, .events) {
+  completed <- Filter(function(e) identical(e$type, "response.completed"), .events)
+  if (length(completed) == 0) return(NULL)
+  completed[[length(completed)]]$response
 }
 
 #' Convert TOOL list to OpenAI Responses API flat tool schema
@@ -392,6 +358,31 @@ openai_chat <- function(
     .max_tool_rounds     = 10,
     .stateful            = FALSE
 ) {
+  built <- do.call(openai_build_chat_request, mget(names(formals())), quote = TRUE)
+  run_chat_pipeline(built, .dry_run)
+}
+
+#' Build a OpenAI chat request without performing it
+#'
+#' @noRd
+openai_build_chat_request <- function(
+    .llm,
+    .model               = "gpt-5.6-terra",
+    .max_output_tokens   = NULL,
+    .temperature         = NULL,
+    .seed                = NULL,
+    .stream              = FALSE,
+    .timeout             = 60,
+    .verbose             = FALSE,
+    .json_schema         = NULL,
+    .max_tries           = 3,
+    .dry_run             = FALSE,
+    .reasoning_effort    = NULL,
+    .tools               = NULL,
+    .tool_choice         = NULL,
+    .max_tool_rounds     = 10,
+    .stateful            = FALSE
+) {
   c(
     "Input .llm must be an LLMMessage object"                                             = S7_inherits(.llm, LLMMessage),
     "Input .model must be a string"                                                       = is.character(.model),
@@ -408,8 +399,7 @@ openai_chat <- function(
     "Input .tools must be NULL, a TOOL object, or a list of TOOL objects"                 = is.null(.tools) || S7_inherits(.tools, TOOL) || (is.list(.tools) && all(purrr::map_lgl(.tools, ~ S7_inherits(.x, TOOL)))),
     "Input .tool_choice must be NULL or one of 'none', 'auto', 'required'"                = is.null(.tool_choice) || (.tool_choice %in% c("none", "auto", "required")),
     ".max_tool_rounds must be a positive integer"                                         = is_integer_valued(.max_tool_rounds) && .max_tool_rounds >= 1,
-    "Input .stateful must be logical"                                                     = is.logical(.stateful),
-    "Streaming is not supported for requests with tool calls"                             = is.null(.tools) || !isTRUE(.stream)
+    "Input .stateful must be logical"                                                     = is.logical(.stateful)
   ) |> validate_inputs()
 
   api_obj <- api_openai(
@@ -487,57 +477,64 @@ openai_chat <- function(
     ) |>
     httr2::req_body_json(data = request_body)
 
-  if (.dry_run) return(request)
-
-  response <- if (stateful_active) {
-    tryCatch(
-      perform_chat_request(request, api_obj, .stream, .timeout, .max_tries),
-      error = function(e) {
-        warning(
-          "OpenAI stateful mode failed (stored context may have expired); ",
-          "retrying with full message history. Original error: ", conditionMessage(e),
-          call. = FALSE
-        )
-        full_body <- request_data$request_body
-        if (!is.null(tools_def)) {
-          full_body$tools       <- tools_to_api(api_obj, tools_def)
-          full_body$tool_choice <- .tool_choice
+  new_chat_request(
+    .request          = request,
+    .api              = api_obj,
+    .llm              = .llm,
+    .body             = request_body,
+    .tools_def        = tools_def,
+    .json             = json,
+    .mode             = if (isTRUE(.stream)) "stream" else "value",
+    .timeout          = .timeout,
+    .max_tries        = .max_tries,
+    .max_tool_rounds  = .max_tool_rounds,
+    .verbose          = .verbose,
+    # Stateful mode sends only the new turn and lets the server supply the
+    # history. When the stored context has expired the request fails, and the
+    # only recovery is to resend the full history against a rebuilt body.
+    #
+    # Every round of the tool loop comes through here, since `chat_performer()`
+    # hands the loop this function rather than calling `perform_chat_request()`
+    # itself. The rebuild is still only attempted on the opening request: the
+    # full body reconstructed below is the conversation as it stood before the
+    # turn began, so using it on a later round would silently discard the tool
+    # calls and results exchanged since. `built$body` is what tells the two
+    # apart, being the loop's accumulated body from round two onwards.
+    .perform_fn = if (!stateful_active) NULL else function(built) {
+      tryCatch(
+        perform_chat_request(built$request, built$api, isTRUE(.stream),
+                             built$timeout, built$max_tries,
+                             built$on_chunk, built$quiet),
+        error = function(e) {
+          if (!identical(built$body, request_body)) stop(e)
+          warning(
+            "OpenAI stateful mode failed (stored context may have expired); ",
+            "retrying with full message history. Original error: ", conditionMessage(e),
+            call. = FALSE
+          )
+          full_body <- request_data$request_body
+          if (!is.null(tools_def)) {
+            full_body$tools       <- tools_to_api(api_obj, tools_def)
+            full_body$tool_choice <- .tool_choice
+          }
+          if (isTRUE(.stream)) full_body$stream <- TRUE
+          fallback_req <- httr2::request("https://api.openai.com/v1/responses") |>
+            httr2::req_headers(
+              Authorization  = sprintf("Bearer %s", api_key),
+              `Content-Type` = "application/json"
+            ) |>
+            httr2::req_body_json(data = full_body)
+          response <- perform_chat_request(fallback_req, built$api, isTRUE(.stream),
+                                           built$timeout, built$max_tries,
+                                           built$on_chunk, built$quiet)
+          # The tool loop appends its results to whatever was actually sent, not
+          # to the stateful body that just failed.
+          attr(response, "tidyllm_continue") <- list(request = fallback_req,
+                                                     body    = full_body)
+          response
         }
-        if (isTRUE(.stream)) full_body$stream <- TRUE
-        fallback_req <- httr2::request("https://api.openai.com/v1/responses") |>
-          httr2::req_headers(
-            Authorization  = sprintf("Bearer %s", api_key),
-            `Content-Type` = "application/json"
-          ) |>
-          httr2::req_body_json(data = full_body)
-        perform_chat_request(fallback_req, api_obj, .stream, .timeout, .max_tries)
-      }
-    )
-  } else {
-    perform_chat_request(request, api_obj, .stream, .timeout, .max_tries)
-  }
-
-  if (!isTRUE(.stream) && !is.null(tools_def)) {
-    response <- process_tool_loop(
-      .api           = api_obj,
-      .response      = response,
-      .tools_def     = tools_def,
-      .request_body  = request_body,
-      .request       = request,
-      .timeout       = .timeout,
-      .max_tries     = .max_tries,
-      .max_tool_rounds = .max_tool_rounds
-    )
-  }
-
-  track_rate_limit(api_obj, response$headers, .verbose)
-
-  add_message(
-    .llm     = .llm,
-    .role    = "assistant",
-    .content = response$assistant_reply,
-    .json    = json,
-    .meta    = response$meta
+      )
+    }
   )
 }
 
@@ -863,6 +860,7 @@ openai_delete_file <- function(.file_id, .called_from = NULL, ...) {
 openai <- create_provider_function(
   .name          = "openai",
   chat           = openai_chat,
+  build          = openai_build_chat_request,
   embed          = openai_embedding,
   send_batch     = send_openai_batch,
   check_batch    = check_openai_batch,

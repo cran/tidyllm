@@ -4,6 +4,20 @@
 #' @noRd
 api_perplexity <- new_class("Perplexity", api_chat_completions)
 
+#' Perplexity speaks the ChatCompletions wire format but returns none of OpenAI's
+#' `x-ratelimit-*` headers, so the inherited parser would raise and
+#' `track_rate_limit()` would turn that into a warning on every call.
+#'
+#' @noRd
+method(ratelimit_from_header, list(api_perplexity, class_any)) <- function(.api, .headers) NULL
+
+#' Perplexity exposes no way to request logprobs, so the inherited ChatCompletions
+#' parser has nothing to find.
+#'
+#' @noRd
+method(parse_logprobs, list(api_perplexity, class_any)) <- function(.api, .input) NULL
+
+
 
 #' A function to get metadata from Perplexity responses
 #'
@@ -23,77 +37,36 @@ method(extract_metadata, list(api_perplexity,class_list))<- function(.api,.respo
   )
 }  
 
-#' A function to get metadata from Openai streaming responses
+#' Parse one Perplexity SSE event
+#'
+#' Perplexity speaks the Chat Completions event shape but terminates on
+#' `finish_reason` rather than on `[DONE]`, and its terminal event carries both
+#' the usage block and the citations. Events without choices are dropped, as
+#' they were before 0.6.0; the assembler merges the response-level fields of
+#' every kept event, so the terminal one still supplies them.
 #'
 #' @noRd
-method(extract_metadata_stream, list(api_perplexity,class_list))<- function(.api,.stream_raw_data) {
-  final_stream_chunk <- .stream_raw_data[[length(.stream_raw_data)]]
-  list(
-    model             = final_stream_chunk$model,
-    timestamp         = lubridate::as_datetime(final_stream_chunk$created),
-    prompt_tokens     = final_stream_chunk$usage$prompt_tokens,
-    completion_tokens = final_stream_chunk$usage$completion_tokens,
-    total_tokens      = final_stream_chunk$usage$total_tokens,
-    stream            = TRUE,
-    specific_metadata = list(
-      id        = final_stream_chunk$id,
-      citations = final_stream_chunk$citations
-    ) 
-  )
-}  
+method(parse_stream_event, api_perplexity) <- function(.api, .chunk) {
+  if (identical(.chunk$data, "[DONE]")) return(stream_event("meta", done = TRUE))
 
+  parsed <- parse_stream_json(.chunk$data)
+  if (is.null(parsed)) return(stream_event("noop"))
 
-#' A method to handle streaming requests 
-#' Perplixity is different than vanilla openai here. 
-#'
-#' @noRd
-method(handle_stream,list(api_perplexity,new_S3_class("httr2_response"))) <- function(.api,.stream_response) {
-  stream_text <- ""
-  stream_data <- list()
-  repeat {
-    stream_chunk <- httr2::resp_stream_sse(.stream_response)
-    # Skip empty chunks
-    if (is.null(stream_chunk$data) || !nzchar(stream_chunk$data)) {
-      next  
-    }
-    
-
-    # Try to parse the JSON content
-    parsed_event <- tryCatch(
-      jsonlite::fromJSON(stream_chunk$data, simplifyVector = FALSE, simplifyDataFrame = FALSE),
-      error = function(e) {
-        message("Failed to parse JSON: ", e$message)
-        return(NULL)
-      }
-    )
-    
-    if (!is.null(parsed_event)) {
-      if(length(parsed_event$choices) >= 1) {
-        stream_data <- append(stream_data,list(parsed_event))
-        if(!is.null(parsed_event$choices[[1]]$finish_reason)){
-          finished <- parsed_event$choices[[1]]$finish_reason
-          if (finished == "stop") {
-            close(.stream_response)
-            message("\n---------\nStream finished\n---------\n")
-            break
-          }
-          
-        }
-        
-        delta_content <- parsed_event$choices[[1]]$delta$content
-        if (!is.null(delta_content)) {
-          stream_text <- paste0(stream_text, delta_content)
-          cat(delta_content)
-          utils::flush.console()
-        }
-      }
-    }
+  if (!is.null(parsed$error)) {
+    detail <- parsed$error$message %||% "unknown error"
+    return(stream_event("error", error = detail, event = parsed))
   }
-  
-  list(
-    reply = stream_text,
-    raw_data = stream_data
-  )
+
+  if (length(parsed$choices) < 1) return(stream_event("meta"))
+
+  choice <- parsed$choices[[1]]
+  # Any finish_reason ends the stream. Before 0.6.0 only "stop" did, so a
+  # response cut short by "length" span forever.
+  done <- !is.null(choice$finish_reason)
+  text <- choice$delta$content
+
+  kind <- if (!is.null(text) && nzchar(text)) "text" else "meta"
+  stream_event(kind, text = text, done = done, keep = TRUE, event = parsed)
 }
 
 
@@ -146,6 +119,52 @@ method(handle_stream,list(api_perplexity,new_S3_class("httr2_response"))) <- fun
 #' @return An updated `LLMMessage` object with the assistant's reply and metadata, including citations and search_results.
 #' @export
 perplexity_chat <- function(
+    .llm,
+    .model = "sonar",
+    .max_tokens = 1024,
+    .temperature = NULL,
+    .top_p = NULL,
+    .frequency_penalty = NULL,
+    .presence_penalty = NULL,
+    .stop = NULL,
+    .search_domain_filter = NULL,
+    .search_language_filter = NULL,
+    .language_preference = NULL,
+    .return_images = FALSE,
+    .image_domain_filter = NULL,
+    .image_format_filter = NULL,
+    .search_recency_filter = NULL,
+    .search_mode = "web",
+    .search_after_date_filter = NULL,
+    .search_before_date_filter = NULL,
+    .last_updated_after_filter = NULL,
+    .last_updated_before_filter = NULL,
+    .disable_search = FALSE,
+    .enable_search_classifier = FALSE,
+    .reasoning_effort = NULL,
+    .return_related_questions = FALSE,
+    .user_location = NULL,
+    .search_context_size = NULL,
+    .search_type = NULL,
+    .stream_mode = NULL,
+    .json_schema = NULL,
+    .top_k = NULL,
+    .web_search_options = NULL,
+    .api_url = "https://api.perplexity.ai/",
+    .timeout = 60,
+    .stream = FALSE,
+    .verbose = FALSE,
+    .max_tries = 3,
+    .dry_run = FALSE
+) {
+  built <- do.call(perplexity_build_chat_request, mget(names(formals())), quote = TRUE)
+  run_chat_pipeline(built, .dry_run)
+}
+
+#' Build a Perplexity chat request without performing it
+#'
+#' @noRd
+perplexity_build_chat_request <- function(
     .llm,
     .model = "sonar",
     .max_tokens = 1024,
@@ -303,24 +322,30 @@ perplexity_chat <- function(
     ) |>
     httr2::req_body_json(data = request_body)
   
-  # Dry run returns request object for inspection
-  if (.dry_run) return(request)
-  
-  # --- Perform Request (may stream) ---
-  response <- perform_chat_request(request, api_obj, .stream, .timeout, .max_tries)
-  assistant_reply <- response$assistant_reply
-  
-  # --- Extract metadata including search_results if present ---
-  meta <- response$meta
-  if (!is.null(response$search_results)) {
-    meta$specific_metadata$search_results <- response$search_results
-  }
-  
-  add_message(.llm     = .llm,
-              .role    = "assistant",
-              .content = assistant_reply,
-              .meta    = meta,
-              .json    = json)
+  new_chat_request(
+    .request   = request,
+    .api       = api_obj,
+    .llm       = .llm,
+    .body      = request_body,
+    # Perplexity supports no tool calls, so there is no loop to run.
+    .tools_def = NULL,
+    .json      = json,
+    .mode      = if (isTRUE(.stream)) "stream" else "value",
+    .timeout   = .timeout,
+    .max_tries = .max_tries,
+    .verbose   = .verbose,
+    # Search results ride alongside the response rather than inside its
+    # metadata, so they are folded in here.
+    .meta_fn = function(meta, response) {
+      # The interpreted response keeps the parsed body under `raw$content`; the
+      # search results are a top-level field of that body, not of the response.
+      results <- response$raw$content$search_results
+      if (!is.null(results)) {
+        meta$specific_metadata$search_results <- results
+      }
+      meta
+    }
+  )
 }
 
 
@@ -583,5 +608,6 @@ perplexity_fetch_research <- function(.job,
 perplexity <- create_provider_function(
   .name = "perplexity",
   chat = perplexity_chat,
+  build = perplexity_build_chat_request,
   deep_research = perplexity_deep_research
 )
