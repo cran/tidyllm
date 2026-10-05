@@ -406,10 +406,10 @@ Console</a></td>
 <td><a href="https://console.groq.com/playground">Groq Console</a></td>
 </tr>
 <tr class="even">
-<td><strong>Perplexity</strong></td>
+<td><strong>Perplexity</strong> (deprecated)</td>
 <td><code>PERPLEXITY_API_KEY</code></td>
-<td><a href="https://www.perplexity.ai/settings/api">Perplexity API
-Settings</a></td>
+<td><a href="https://docs.perplexity.ai/docs/getting-started/overview">Perplexity
+API docs</a></td>
 </tr>
 <tr class="odd">
 <td><strong>DeepSeek</strong></td>
@@ -420,8 +420,8 @@ Platform</a></td>
 <tr class="even">
 <td><strong>Voyage AI</strong></td>
 <td><code>VOYAGE_API_KEY</code></td>
-<td><a href="https://dashboard.voyageai.com/api-keys">Voyage AI
-Dashboard</a></td>
+<td><a href="https://docs.voyageai.com/docs/api-key-and-installation">Voyage AI
+API key guide</a></td>
 </tr>
 <tr class="odd">
 <td><strong>OpenRouter</strong></td>
@@ -433,8 +433,23 @@ Dashboard</a></td>
 <td><code>AZURE_OPENAI_API_KEY</code></td>
 <td><a href="https://portal.azure.com/">Azure Portal</a></td>
 </tr>
+<tr class="odd">
+<td><strong>Tavily</strong> (web search for <code>websearch()</code> and
+<code>websearch_tool()</code>)</td>
+<td><code>TAVILY_API_KEY</code></td>
+<td><a href="https://app.tavily.com">Tavily</a></td>
+</tr>
+<tr class="even">
+<td><strong>SearXNG</strong> (self-hosted web search for
+<code>websearch()</code> and <code>websearch_tool()</code>)</td>
+<td><code>SEARXNG_SERVER</code> (the server address, not a key)</td>
+<td><a href="https://docs.searxng.org">SearXNG</a></td>
+</tr>
 </tbody>
 </table>
+<p><code>claude_cli()</code> needs no key: it runs the
+<code>claude</code> command line tool that is already installed and
+signed in on your machine.</p>
 </div>
 <div id="running-local-models" class="section level3">
 <h3>Running Local Models</h3>
@@ -488,11 +503,11 @@ pattern:</p>
 <code>list_files()</code>, <code>file_info()</code>,
 <code>delete_file()</code></li>
 <li><strong>Providers</strong> specify the API: <code>openai()</code>,
-<code>claude()</code>, <code>gemini()</code>, <code>ollama()</code>,
-<code>mistral()</code>, <code>groq()</code>, <code>perplexity()</code>,
+<code>claude()</code>, <code>claude_cli()</code>, <code>gemini()</code>,
+<code>ollama()</code>, <code>mistral()</code>, <code>groq()</code>,
 <code>deepseek()</code>, <code>voyage()</code>,
 <code>openrouter()</code>, <code>llamacpp()</code>,
-<code>azure_openai()</code></li>
+<code>azure_openai()</code>, <code>ellmer()</code></li>
 </ul>
 <p>Provider-specific functions like <code>openai_chat()</code> or
 <code>claude_chat()</code> also work directly and expose the full range
@@ -506,7 +521,7 @@ single media object or a list of them:</p>
 <div class="sourceCode" id="cb10"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" tabindex="-1"></a><span class="co"># Single image</span></span>
 <span id="cb10-2"><a href="#cb10-2" tabindex="-1"></a>image_description <span class="ot">&lt;-</span> <span class="fu">llm_message</span>(<span class="st">&quot;Describe this picture. Can you guess where it was taken?&quot;</span>,</span>
 <span id="cb10-3"><a href="#cb10-3" tabindex="-1"></a>                                  <span class="at">.media =</span> <span class="fu">img</span>(<span class="st">&quot;picture.jpeg&quot;</span>)) <span class="sc">|&gt;</span></span>
-<span id="cb10-4"><a href="#cb10-4" tabindex="-1"></a>  <span class="fu">chat</span>(<span class="fu">openai</span>(<span class="at">.model =</span> <span class="st">&quot;gpt-5.6-terra&quot;</span>))</span>
+<span id="cb10-4"><a href="#cb10-4" tabindex="-1"></a>  <span class="fu">chat</span>(<span class="fu">openai</span>(<span class="at">.model =</span> <span class="st">&quot;gpt-6-luna&quot;</span>))</span>
 <span id="cb10-5"><a href="#cb10-5" tabindex="-1"></a></span>
 <span id="cb10-6"><a href="#cb10-6" tabindex="-1"></a><span class="fu">get_reply</span>(image_description)</span></code></pre></div>
 <pre><code>## [1] &quot;The picture shows a beautiful landscape with a lake, mountains, and a town nestled below. The area appears lush and green, with agricultural fields visible. This scenery is reminiscent of northern Italy, particularly around Lake Garda.&quot;</code></pre>
@@ -598,12 +613,6 @@ list.</p>
 <span id="cb19-2"><a href="#cb19-2" tabindex="-1"></a>            <span class="at">.capture_plot =</span> <span class="cn">TRUE</span>,</span>
 <span id="cb19-3"><a href="#cb19-3" tabindex="-1"></a>            <span class="at">.f =</span> <span class="sc">~</span>{<span class="fu">summary</span>(mtcars)}) <span class="sc">|&gt;</span></span>
 <span id="cb19-4"><a href="#cb19-4" tabindex="-1"></a>  <span class="fu">chat</span>(<span class="fu">claude</span>())</span></code></pre></div>
-<pre><code>## Warning: The `.imagefile` argument of `llm_message()` is deprecated as of tidyllm 0.5.0.
-## ℹ Please use the `.media` argument instead.
-## ℹ Replace with .media = img(path).
-## This warning is displayed once per session.
-## Call `lifecycle::last_lifecycle_warnings()` to see where this warning was
-## generated.</code></pre>
 <pre><code>## Message History:
 ## system:
 ## You are a helpful assistant
@@ -626,12 +635,12 @@ list.</p>
 <p><code>get_reply()</code> retrieves assistant text from a message
 history. Use an index to access a specific reply, or omit it to get the
 last:</p>
-<div class="sourceCode" id="cb22"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb22-1"><a href="#cb22-1" tabindex="-1"></a>conversation <span class="ot">&lt;-</span> <span class="fu">llm_message</span>(<span class="st">&quot;Imagine a German address.&quot;</span>) <span class="sc">|&gt;</span></span>
-<span id="cb22-2"><a href="#cb22-2" tabindex="-1"></a>  <span class="fu">chat</span>(<span class="fu">groq</span>()) <span class="sc">|&gt;</span></span>
-<span id="cb22-3"><a href="#cb22-3" tabindex="-1"></a>  <span class="fu">llm_message</span>(<span class="st">&quot;Imagine another address.&quot;</span>) <span class="sc">|&gt;</span></span>
-<span id="cb22-4"><a href="#cb22-4" tabindex="-1"></a>  <span class="fu">chat</span>(<span class="fu">claude</span>())</span>
-<span id="cb22-5"><a href="#cb22-5" tabindex="-1"></a></span>
-<span id="cb22-6"><a href="#cb22-6" tabindex="-1"></a>conversation</span></code></pre></div>
+<div class="sourceCode" id="cb21"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb21-1"><a href="#cb21-1" tabindex="-1"></a>conversation <span class="ot">&lt;-</span> <span class="fu">llm_message</span>(<span class="st">&quot;Imagine a German address.&quot;</span>) <span class="sc">|&gt;</span></span>
+<span id="cb21-2"><a href="#cb21-2" tabindex="-1"></a>  <span class="fu">chat</span>(<span class="fu">groq</span>()) <span class="sc">|&gt;</span></span>
+<span id="cb21-3"><a href="#cb21-3" tabindex="-1"></a>  <span class="fu">llm_message</span>(<span class="st">&quot;Imagine another address.&quot;</span>) <span class="sc">|&gt;</span></span>
+<span id="cb21-4"><a href="#cb21-4" tabindex="-1"></a>  <span class="fu">chat</span>(<span class="fu">claude</span>())</span>
+<span id="cb21-5"><a href="#cb21-5" tabindex="-1"></a></span>
+<span id="cb21-6"><a href="#cb21-6" tabindex="-1"></a>conversation</span></code></pre></div>
 <pre><code>## Message History:
 ## system:
 ## You are a helpful assistant
@@ -652,13 +661,13 @@ last:</p>
 ## Fichtenweg 78
 ## 42103 Wuppertal
 ## --------------------------------------------------------------</code></pre>
-<div class="sourceCode" id="cb24"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb24-1"><a href="#cb24-1" tabindex="-1"></a>conversation <span class="sc">|&gt;</span> <span class="fu">get_reply</span>(<span class="dv">1</span>)   <span class="co"># first reply</span></span></code></pre></div>
+<div class="sourceCode" id="cb23"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb23-1"><a href="#cb23-1" tabindex="-1"></a>conversation <span class="sc">|&gt;</span> <span class="fu">get_reply</span>(<span class="dv">1</span>)   <span class="co"># first reply</span></span></code></pre></div>
 <pre><code>## [1] &quot;Herr Müller\nMusterstraße 12\n53111 Bonn&quot;</code></pre>
-<div class="sourceCode" id="cb26"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb26-1"><a href="#cb26-1" tabindex="-1"></a>conversation <span class="sc">|&gt;</span> <span class="fu">get_reply</span>()    <span class="co"># last reply (default)</span></span></code></pre></div>
+<div class="sourceCode" id="cb25"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb25-1"><a href="#cb25-1" tabindex="-1"></a>conversation <span class="sc">|&gt;</span> <span class="fu">get_reply</span>()    <span class="co"># last reply (default)</span></span></code></pre></div>
 <pre><code>## [1] &quot;Frau Schmidt\nFichtenweg 78\n42103 Wuppertal&quot;</code></pre>
 <p>Convert the message history (without attachments) to a tibble with
 <code>as_tibble()</code>:</p>
-<div class="sourceCode" id="cb28"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb28-1"><a href="#cb28-1" tabindex="-1"></a>conversation <span class="sc">|&gt;</span> <span class="fu">as_tibble</span>()</span></code></pre></div>
+<div class="sourceCode" id="cb27"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb27-1"><a href="#cb27-1" tabindex="-1"></a>conversation <span class="sc">|&gt;</span> <span class="fu">as_tibble</span>()</span></code></pre></div>
 <pre><code>## # A tibble: 5 × 2
 ##   role      content                                       
 ##   &lt;chr&gt;     &lt;chr&gt;                                         
@@ -669,7 +678,7 @@ last:</p>
 ## 5 assistant &quot;Frau Schmidt\nFichtenweg 78\n42103 Wuppertal&quot;</code></pre>
 <p><code>get_metadata()</code> returns token counts, model names, and
 API-specific metadata for all assistant replies:</p>
-<div class="sourceCode" id="cb30"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb30-1"><a href="#cb30-1" tabindex="-1"></a>conversation <span class="sc">|&gt;</span> <span class="fu">get_metadata</span>()</span></code></pre></div>
+<div class="sourceCode" id="cb29"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb29-1"><a href="#cb29-1" tabindex="-1"></a>conversation <span class="sc">|&gt;</span> <span class="fu">get_metadata</span>()</span></code></pre></div>
 <pre><code>## # A tibble: 2 × 6
 ##   model  timestamp           prompt_tokens completion_tokens
 ##   &lt;chr&gt;  &lt;dttm&gt;                      &lt;int&gt;             &lt;int&gt;
@@ -684,9 +693,9 @@ Gemini, DeepSeek), or grounding information (Gemini).</p>
 <h3>Listing Available Models</h3>
 <p>Use <code>list_models()</code> to query which models a provider
 offers:</p>
-<div class="sourceCode" id="cb32"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb32-1"><a href="#cb32-1" tabindex="-1"></a><span class="fu">list_models</span>(<span class="fu">openai</span>())</span>
-<span id="cb32-2"><a href="#cb32-2" tabindex="-1"></a><span class="fu">list_models</span>(<span class="fu">openrouter</span>())   <span class="co"># 300+ models across providers</span></span>
-<span id="cb32-3"><a href="#cb32-3" tabindex="-1"></a><span class="fu">list_models</span>(<span class="fu">ollama</span>())       <span class="co"># models installed locally</span></span></code></pre></div>
+<div class="sourceCode" id="cb31"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb31-1"><a href="#cb31-1" tabindex="-1"></a><span class="fu">list_models</span>(<span class="fu">openai</span>())</span>
+<span id="cb31-2"><a href="#cb31-2" tabindex="-1"></a><span class="fu">list_models</span>(<span class="fu">openrouter</span>())   <span class="co"># 300+ models across providers</span></span>
+<span id="cb31-3"><a href="#cb31-3" tabindex="-1"></a><span class="fu">list_models</span>(<span class="fu">ollama</span>())       <span class="co"># models installed locally</span></span></code></pre></div>
 </div>
 </div>
 <div id="working-with-structured-outputs" class="section level2">
@@ -703,24 +712,24 @@ schema:</p>
 <li><code>field_object(...)</code>: nested object (supports
 <code>.vector = TRUE</code> for arrays)</li>
 </ul>
-<div class="sourceCode" id="cb33"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb33-1"><a href="#cb33-1" tabindex="-1"></a>person_schema <span class="ot">&lt;-</span> <span class="fu">tidyllm_schema</span>(</span>
-<span id="cb33-2"><a href="#cb33-2" tabindex="-1"></a>  <span class="at">first_name =</span> <span class="fu">field_chr</span>(<span class="st">&quot;A male first name&quot;</span>),</span>
-<span id="cb33-3"><a href="#cb33-3" tabindex="-1"></a>  <span class="at">last_name  =</span> <span class="fu">field_chr</span>(<span class="st">&quot;A common last name&quot;</span>),</span>
-<span id="cb33-4"><a href="#cb33-4" tabindex="-1"></a>  <span class="at">occupation =</span> <span class="fu">field_chr</span>(<span class="st">&quot;A quirky occupation&quot;</span>),</span>
-<span id="cb33-5"><a href="#cb33-5" tabindex="-1"></a>  <span class="at">address    =</span> <span class="fu">field_object</span>(</span>
-<span id="cb33-6"><a href="#cb33-6" tabindex="-1"></a>    <span class="st">&quot;The person&#39;s home address&quot;</span>,</span>
-<span id="cb33-7"><a href="#cb33-7" tabindex="-1"></a>    <span class="at">street  =</span> <span class="fu">field_chr</span>(<span class="st">&quot;Street name&quot;</span>),</span>
-<span id="cb33-8"><a href="#cb33-8" tabindex="-1"></a>    <span class="at">number  =</span> <span class="fu">field_dbl</span>(<span class="st">&quot;House number&quot;</span>),</span>
-<span id="cb33-9"><a href="#cb33-9" tabindex="-1"></a>    <span class="at">city    =</span> <span class="fu">field_chr</span>(<span class="st">&quot;A large city&quot;</span>),</span>
-<span id="cb33-10"><a href="#cb33-10" tabindex="-1"></a>    <span class="at">zip     =</span> <span class="fu">field_dbl</span>(<span class="st">&quot;Postal code&quot;</span>),</span>
-<span id="cb33-11"><a href="#cb33-11" tabindex="-1"></a>    <span class="at">country =</span> <span class="fu">field_fct</span>(<span class="st">&quot;Country&quot;</span>, <span class="at">.levels =</span> <span class="fu">c</span>(<span class="st">&quot;Germany&quot;</span>, <span class="st">&quot;France&quot;</span>))</span>
-<span id="cb33-12"><a href="#cb33-12" tabindex="-1"></a>  )</span>
-<span id="cb33-13"><a href="#cb33-13" tabindex="-1"></a>)</span>
-<span id="cb33-14"><a href="#cb33-14" tabindex="-1"></a></span>
-<span id="cb33-15"><a href="#cb33-15" tabindex="-1"></a>profile <span class="ot">&lt;-</span> <span class="fu">llm_message</span>(<span class="st">&quot;Imagine a person profile matching the schema.&quot;</span>) <span class="sc">|&gt;</span></span>
-<span id="cb33-16"><a href="#cb33-16" tabindex="-1"></a>  <span class="fu">chat</span>(<span class="fu">openai</span>(), <span class="at">.json_schema =</span> person_schema)</span>
-<span id="cb33-17"><a href="#cb33-17" tabindex="-1"></a></span>
-<span id="cb33-18"><a href="#cb33-18" tabindex="-1"></a>profile</span></code></pre></div>
+<div class="sourceCode" id="cb32"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb32-1"><a href="#cb32-1" tabindex="-1"></a>person_schema <span class="ot">&lt;-</span> <span class="fu">tidyllm_schema</span>(</span>
+<span id="cb32-2"><a href="#cb32-2" tabindex="-1"></a>  <span class="at">first_name =</span> <span class="fu">field_chr</span>(<span class="st">&quot;A male first name&quot;</span>),</span>
+<span id="cb32-3"><a href="#cb32-3" tabindex="-1"></a>  <span class="at">last_name  =</span> <span class="fu">field_chr</span>(<span class="st">&quot;A common last name&quot;</span>),</span>
+<span id="cb32-4"><a href="#cb32-4" tabindex="-1"></a>  <span class="at">occupation =</span> <span class="fu">field_chr</span>(<span class="st">&quot;A quirky occupation&quot;</span>),</span>
+<span id="cb32-5"><a href="#cb32-5" tabindex="-1"></a>  <span class="at">address    =</span> <span class="fu">field_object</span>(</span>
+<span id="cb32-6"><a href="#cb32-6" tabindex="-1"></a>    <span class="st">&quot;The person&#39;s home address&quot;</span>,</span>
+<span id="cb32-7"><a href="#cb32-7" tabindex="-1"></a>    <span class="at">street  =</span> <span class="fu">field_chr</span>(<span class="st">&quot;Street name&quot;</span>),</span>
+<span id="cb32-8"><a href="#cb32-8" tabindex="-1"></a>    <span class="at">number  =</span> <span class="fu">field_dbl</span>(<span class="st">&quot;House number&quot;</span>),</span>
+<span id="cb32-9"><a href="#cb32-9" tabindex="-1"></a>    <span class="at">city    =</span> <span class="fu">field_chr</span>(<span class="st">&quot;A large city&quot;</span>),</span>
+<span id="cb32-10"><a href="#cb32-10" tabindex="-1"></a>    <span class="at">zip     =</span> <span class="fu">field_dbl</span>(<span class="st">&quot;Postal code&quot;</span>),</span>
+<span id="cb32-11"><a href="#cb32-11" tabindex="-1"></a>    <span class="at">country =</span> <span class="fu">field_fct</span>(<span class="st">&quot;Country&quot;</span>, <span class="at">.levels =</span> <span class="fu">c</span>(<span class="st">&quot;Germany&quot;</span>, <span class="st">&quot;France&quot;</span>))</span>
+<span id="cb32-12"><a href="#cb32-12" tabindex="-1"></a>  )</span>
+<span id="cb32-13"><a href="#cb32-13" tabindex="-1"></a>)</span>
+<span id="cb32-14"><a href="#cb32-14" tabindex="-1"></a></span>
+<span id="cb32-15"><a href="#cb32-15" tabindex="-1"></a>profile <span class="ot">&lt;-</span> <span class="fu">llm_message</span>(<span class="st">&quot;Imagine a person profile matching the schema.&quot;</span>) <span class="sc">|&gt;</span></span>
+<span id="cb32-16"><a href="#cb32-16" tabindex="-1"></a>  <span class="fu">chat</span>(<span class="fu">openai</span>(), <span class="at">.json_schema =</span> person_schema)</span>
+<span id="cb32-17"><a href="#cb32-17" tabindex="-1"></a></span>
+<span id="cb32-18"><a href="#cb32-18" tabindex="-1"></a>profile</span></code></pre></div>
 <pre><code>## Message History:
 ## system:
 ## You are a helpful assistant
@@ -735,7 +744,7 @@ schema:</p>
 ## --------------------------------------------------------------</code></pre>
 <p>Extract the parsed result as an R list with
 <code>get_reply_data()</code>:</p>
-<div class="sourceCode" id="cb35"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb35-1"><a href="#cb35-1" tabindex="-1"></a>profile <span class="sc">|&gt;</span> <span class="fu">get_reply_data</span>() <span class="sc">|&gt;</span> <span class="fu">str</span>()</span></code></pre></div>
+<div class="sourceCode" id="cb34"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb34-1"><a href="#cb34-1" tabindex="-1"></a>profile <span class="sc">|&gt;</span> <span class="fu">get_reply_data</span>() <span class="sc">|&gt;</span> <span class="fu">str</span>()</span></code></pre></div>
 <pre><code>## List of 4
 ##  $ first_name: chr &quot;Julien&quot;
 ##  $ last_name : chr &quot;Martin&quot;
@@ -748,18 +757,18 @@ schema:</p>
 ##   ..$ country: chr &quot;France&quot;</code></pre>
 <p>Set <code>.vector = TRUE</code> on <code>field_object()</code> to get
 outputs that unpack directly into a data frame:</p>
-<div class="sourceCode" id="cb37"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb37-1"><a href="#cb37-1" tabindex="-1"></a><span class="fu">llm_message</span>(<span class="st">&quot;Imagine five people.&quot;</span>) <span class="sc">|&gt;</span></span>
-<span id="cb37-2"><a href="#cb37-2" tabindex="-1"></a>  <span class="fu">chat</span>(<span class="fu">openai</span>(),</span>
-<span id="cb37-3"><a href="#cb37-3" tabindex="-1"></a>       <span class="at">.json_schema =</span> <span class="fu">tidyllm_schema</span>(</span>
-<span id="cb37-4"><a href="#cb37-4" tabindex="-1"></a>         <span class="at">person =</span> <span class="fu">field_object</span>(</span>
-<span id="cb37-5"><a href="#cb37-5" tabindex="-1"></a>           <span class="at">first_name =</span> <span class="fu">field_chr</span>(),</span>
-<span id="cb37-6"><a href="#cb37-6" tabindex="-1"></a>           <span class="at">last_name  =</span> <span class="fu">field_chr</span>(),</span>
-<span id="cb37-7"><a href="#cb37-7" tabindex="-1"></a>           <span class="at">occupation =</span> <span class="fu">field_chr</span>(),</span>
-<span id="cb37-8"><a href="#cb37-8" tabindex="-1"></a>           <span class="at">.vector    =</span> <span class="cn">TRUE</span></span>
-<span id="cb37-9"><a href="#cb37-9" tabindex="-1"></a>         )</span>
-<span id="cb37-10"><a href="#cb37-10" tabindex="-1"></a>       )) <span class="sc">|&gt;</span></span>
-<span id="cb37-11"><a href="#cb37-11" tabindex="-1"></a>  <span class="fu">get_reply_data</span>() <span class="sc">|&gt;</span></span>
-<span id="cb37-12"><a href="#cb37-12" tabindex="-1"></a>  <span class="fu">bind_rows</span>()</span></code></pre></div>
+<div class="sourceCode" id="cb36"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb36-1"><a href="#cb36-1" tabindex="-1"></a><span class="fu">llm_message</span>(<span class="st">&quot;Imagine five people.&quot;</span>) <span class="sc">|&gt;</span></span>
+<span id="cb36-2"><a href="#cb36-2" tabindex="-1"></a>  <span class="fu">chat</span>(<span class="fu">openai</span>(),</span>
+<span id="cb36-3"><a href="#cb36-3" tabindex="-1"></a>       <span class="at">.json_schema =</span> <span class="fu">tidyllm_schema</span>(</span>
+<span id="cb36-4"><a href="#cb36-4" tabindex="-1"></a>         <span class="at">person =</span> <span class="fu">field_object</span>(</span>
+<span id="cb36-5"><a href="#cb36-5" tabindex="-1"></a>           <span class="at">first_name =</span> <span class="fu">field_chr</span>(),</span>
+<span id="cb36-6"><a href="#cb36-6" tabindex="-1"></a>           <span class="at">last_name  =</span> <span class="fu">field_chr</span>(),</span>
+<span id="cb36-7"><a href="#cb36-7" tabindex="-1"></a>           <span class="at">occupation =</span> <span class="fu">field_chr</span>(),</span>
+<span id="cb36-8"><a href="#cb36-8" tabindex="-1"></a>           <span class="at">.vector    =</span> <span class="cn">TRUE</span></span>
+<span id="cb36-9"><a href="#cb36-9" tabindex="-1"></a>         )</span>
+<span id="cb36-10"><a href="#cb36-10" tabindex="-1"></a>       )) <span class="sc">|&gt;</span></span>
+<span id="cb36-11"><a href="#cb36-11" tabindex="-1"></a>  <span class="fu">get_reply_data</span>() <span class="sc">|&gt;</span></span>
+<span id="cb36-12"><a href="#cb36-12" tabindex="-1"></a>  <span class="fu">bind_rows</span>()</span></code></pre></div>
 <pre><code>##   first_name last_name          occupation
 ## 1      Alice   Johnson  Software Developer
 ## 2     Robert  Anderson    Graphic Designer
@@ -778,35 +787,37 @@ argument.</p>
 and <code>.json_schema</code> can be set directly in verbs like
 <code>chat()</code>. Provider-specific arguments go in the provider
 function:</p>
-<div class="sourceCode" id="cb39"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb39-1"><a href="#cb39-1" tabindex="-1"></a><span class="co"># Common args in the verb</span></span>
-<span id="cb39-2"><a href="#cb39-2" tabindex="-1"></a><span class="fu">llm_message</span>(<span class="st">&quot;Write a haiku about tidyllm.&quot;</span>) <span class="sc">|&gt;</span></span>
-<span id="cb39-3"><a href="#cb39-3" tabindex="-1"></a>  <span class="fu">chat</span>(<span class="fu">ollama</span>(), <span class="at">.temperature =</span> <span class="dv">0</span>)</span>
-<span id="cb39-4"><a href="#cb39-4" tabindex="-1"></a></span>
-<span id="cb39-5"><a href="#cb39-5" tabindex="-1"></a><span class="co"># Provider-specific args in the provider</span></span>
-<span id="cb39-6"><a href="#cb39-6" tabindex="-1"></a><span class="fu">llm_message</span>(<span class="st">&quot;Hello&quot;</span>) <span class="sc">|&gt;</span></span>
-<span id="cb39-7"><a href="#cb39-7" tabindex="-1"></a>  <span class="fu">chat</span>(<span class="fu">ollama</span>(<span class="at">.ollama_server =</span> <span class="st">&quot;http://my-server:11434&quot;</span>), <span class="at">.temperature =</span> <span class="dv">0</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb38"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb38-1"><a href="#cb38-1" tabindex="-1"></a><span class="co"># Common args in the verb</span></span>
+<span id="cb38-2"><a href="#cb38-2" tabindex="-1"></a><span class="fu">llm_message</span>(<span class="st">&quot;Write a haiku about tidyllm.&quot;</span>) <span class="sc">|&gt;</span></span>
+<span id="cb38-3"><a href="#cb38-3" tabindex="-1"></a>  <span class="fu">chat</span>(<span class="fu">ollama</span>(), <span class="at">.temperature =</span> <span class="dv">0</span>)</span>
+<span id="cb38-4"><a href="#cb38-4" tabindex="-1"></a></span>
+<span id="cb38-5"><a href="#cb38-5" tabindex="-1"></a><span class="co"># Provider-specific args in the provider</span></span>
+<span id="cb38-6"><a href="#cb38-6" tabindex="-1"></a><span class="fu">llm_message</span>(<span class="st">&quot;Hello&quot;</span>) <span class="sc">|&gt;</span></span>
+<span id="cb38-7"><a href="#cb38-7" tabindex="-1"></a>  <span class="fu">chat</span>(<span class="fu">ollama</span>(<span class="at">.ollama_server =</span> <span class="fu">Sys.getenv</span>(<span class="st">&quot;OLLAMA_SERVER&quot;</span>)), <span class="at">.temperature =</span> <span class="dv">0</span>)</span></code></pre></div>
 <p>When an argument appears in both <code>chat()</code> and the provider
 function, <code>chat()</code> takes precedence. If a common argument is
 not supported by the chosen provider, <code>chat()</code> raises an
-error rather than silently ignoring it.</p>
+error rather than silently ignoring it.
+<code>provider_capabilities()</code> (see “Checking What a Provider
+Supports” below) lists which arguments each provider accepts.</p>
 </div>
 <div id="tool-use" class="section level2">
 <h2>Tool Use</h2>
 <p>Define R functions that the model can call during a conversation.
 Wrap them with <code>tidyllm_tool()</code>:</p>
-<div class="sourceCode" id="cb40"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb40-1"><a href="#cb40-1" tabindex="-1"></a>get_current_time <span class="ot">&lt;-</span> <span class="cf">function</span>(tz, <span class="at">format =</span> <span class="st">&quot;%Y-%m-%d %H:%M:%S&quot;</span>) {</span>
-<span id="cb40-2"><a href="#cb40-2" tabindex="-1"></a>  <span class="fu">format</span>(<span class="fu">Sys.time</span>(), <span class="at">tz =</span> tz, <span class="at">format =</span> format, <span class="at">usetz =</span> <span class="cn">TRUE</span>)</span>
-<span id="cb40-3"><a href="#cb40-3" tabindex="-1"></a>}</span>
-<span id="cb40-4"><a href="#cb40-4" tabindex="-1"></a></span>
-<span id="cb40-5"><a href="#cb40-5" tabindex="-1"></a>time_tool <span class="ot">&lt;-</span> <span class="fu">tidyllm_tool</span>(</span>
-<span id="cb40-6"><a href="#cb40-6" tabindex="-1"></a>  <span class="at">.f          =</span> get_current_time,</span>
-<span id="cb40-7"><a href="#cb40-7" tabindex="-1"></a>  <span class="at">.description =</span> <span class="st">&quot;Returns the current time in a specified timezone.&quot;</span>,</span>
-<span id="cb40-8"><a href="#cb40-8" tabindex="-1"></a>  <span class="at">tz     =</span> <span class="fu">field_chr</span>(<span class="st">&quot;The timezone identifier, e.g. &#39;Europe/Berlin&#39;.&quot;</span>),</span>
-<span id="cb40-9"><a href="#cb40-9" tabindex="-1"></a>  <span class="at">format =</span> <span class="fu">field_chr</span>(<span class="st">&quot;strftime format string. Default: &#39;%Y-%m-%d %H:%M:%S&#39;.&quot;</span>)</span>
-<span id="cb40-10"><a href="#cb40-10" tabindex="-1"></a>)</span>
-<span id="cb40-11"><a href="#cb40-11" tabindex="-1"></a></span>
-<span id="cb40-12"><a href="#cb40-12" tabindex="-1"></a><span class="fu">llm_message</span>(<span class="st">&quot;What time is it in Stuttgart right now?&quot;</span>) <span class="sc">|&gt;</span></span>
-<span id="cb40-13"><a href="#cb40-13" tabindex="-1"></a>  <span class="fu">chat</span>(<span class="fu">openai</span>(), <span class="at">.tools =</span> time_tool)</span></code></pre></div>
+<div class="sourceCode" id="cb39"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb39-1"><a href="#cb39-1" tabindex="-1"></a>get_current_time <span class="ot">&lt;-</span> <span class="cf">function</span>(tz, <span class="at">format =</span> <span class="st">&quot;%Y-%m-%d %H:%M:%S&quot;</span>) {</span>
+<span id="cb39-2"><a href="#cb39-2" tabindex="-1"></a>  <span class="fu">format</span>(<span class="fu">Sys.time</span>(), <span class="at">tz =</span> tz, <span class="at">format =</span> format, <span class="at">usetz =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb39-3"><a href="#cb39-3" tabindex="-1"></a>}</span>
+<span id="cb39-4"><a href="#cb39-4" tabindex="-1"></a></span>
+<span id="cb39-5"><a href="#cb39-5" tabindex="-1"></a>time_tool <span class="ot">&lt;-</span> <span class="fu">tidyllm_tool</span>(</span>
+<span id="cb39-6"><a href="#cb39-6" tabindex="-1"></a>  <span class="at">.f          =</span> get_current_time,</span>
+<span id="cb39-7"><a href="#cb39-7" tabindex="-1"></a>  <span class="at">.description =</span> <span class="st">&quot;Returns the current time in a specified timezone.&quot;</span>,</span>
+<span id="cb39-8"><a href="#cb39-8" tabindex="-1"></a>  <span class="at">tz     =</span> <span class="fu">field_chr</span>(<span class="st">&quot;The timezone identifier, e.g. &#39;Europe/Berlin&#39;.&quot;</span>),</span>
+<span id="cb39-9"><a href="#cb39-9" tabindex="-1"></a>  <span class="at">format =</span> <span class="fu">field_chr</span>(<span class="st">&quot;strftime format string. Default: &#39;%Y-%m-%d %H:%M:%S&#39;.&quot;</span>)</span>
+<span id="cb39-10"><a href="#cb39-10" tabindex="-1"></a>)</span>
+<span id="cb39-11"><a href="#cb39-11" tabindex="-1"></a></span>
+<span id="cb39-12"><a href="#cb39-12" tabindex="-1"></a><span class="fu">llm_message</span>(<span class="st">&quot;What time is it in Stuttgart right now?&quot;</span>) <span class="sc">|&gt;</span></span>
+<span id="cb39-13"><a href="#cb39-13" tabindex="-1"></a>  <span class="fu">chat</span>(<span class="fu">openai</span>(), <span class="at">.tools =</span> time_tool)</span></code></pre></div>
 <pre><code>## Message History:
 ## system:
 ## You are a helpful assistant
@@ -822,12 +833,15 @@ Wrap them with <code>tidyllm_tool()</code>:</p>
 runs it in your R session, and the result is fed back automatically.
 Multi-turn tool loops (where the model makes several tool calls) are
 handled transparently.</p>
+<p>For provider-independent web search with
+<code>websearch_tool()</code> and tools served over MCP, see the <a href="https://edubruell.github.io/tidyllm/articles/tidyllm_tools.html">tools
+article</a>.</p>
 <p>If you use <strong>ellmer</strong>, convert existing ellmer tool
 definitions with <code>ellmer_tool()</code>:</p>
-<div class="sourceCode" id="cb42"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb42-1"><a href="#cb42-1" tabindex="-1"></a><span class="fu">library</span>(ellmer)</span>
-<span id="cb42-2"><a href="#cb42-2" tabindex="-1"></a>btw_tool <span class="ot">&lt;-</span> <span class="fu">ellmer_tool</span>(btw<span class="sc">::</span>btw_tool_files_list_files)</span>
-<span id="cb42-3"><a href="#cb42-3" tabindex="-1"></a><span class="fu">llm_message</span>(<span class="st">&quot;List files in the R/ folder.&quot;</span>) <span class="sc">|&gt;</span></span>
-<span id="cb42-4"><a href="#cb42-4" tabindex="-1"></a>  <span class="fu">chat</span>(<span class="fu">claude</span>(), <span class="at">.tools =</span> btw_tool)</span></code></pre></div>
+<div class="sourceCode" id="cb41"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb41-1"><a href="#cb41-1" tabindex="-1"></a><span class="fu">library</span>(ellmer)</span>
+<span id="cb41-2"><a href="#cb41-2" tabindex="-1"></a>btw_tool <span class="ot">&lt;-</span> <span class="fu">ellmer_tool</span>(btw<span class="sc">::</span>btw_tool_files_list_files)</span>
+<span id="cb41-3"><a href="#cb41-3" tabindex="-1"></a><span class="fu">llm_message</span>(<span class="st">&quot;List files in the R/ folder.&quot;</span>) <span class="sc">|&gt;</span></span>
+<span id="cb41-4"><a href="#cb41-4" tabindex="-1"></a>  <span class="fu">chat</span>(<span class="fu">claude</span>(), <span class="at">.tools =</span> btw_tool)</span></code></pre></div>
 <p>For a detailed guide, see the Tool Use article on the tidyllm
 website.</p>
 </div>
@@ -835,10 +849,10 @@ website.</p>
 <h2>Embeddings</h2>
 <p>Generate vector representations of text with <code>embed()</code>.
 The output is a tibble with one row per input:</p>
-<div class="sourceCode" id="cb43"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb43-1"><a href="#cb43-1" tabindex="-1"></a><span class="fu">c</span>(<span class="st">&quot;What is the meaning of life?&quot;</span>,</span>
-<span id="cb43-2"><a href="#cb43-2" tabindex="-1"></a>  <span class="st">&quot;How much wood would a woodchuck chuck?&quot;</span>,</span>
-<span id="cb43-3"><a href="#cb43-3" tabindex="-1"></a>  <span class="st">&quot;How does the brain work?&quot;</span>) <span class="sc">|&gt;</span></span>
-<span id="cb43-4"><a href="#cb43-4" tabindex="-1"></a>  <span class="fu">embed</span>(<span class="fu">ollama</span>())</span></code></pre></div>
+<div class="sourceCode" id="cb42"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb42-1"><a href="#cb42-1" tabindex="-1"></a><span class="fu">c</span>(<span class="st">&quot;What is the meaning of life?&quot;</span>,</span>
+<span id="cb42-2"><a href="#cb42-2" tabindex="-1"></a>  <span class="st">&quot;How much wood would a woodchuck chuck?&quot;</span>,</span>
+<span id="cb42-3"><a href="#cb42-3" tabindex="-1"></a>  <span class="st">&quot;How does the brain work?&quot;</span>) <span class="sc">|&gt;</span></span>
+<span id="cb42-4"><a href="#cb42-4" tabindex="-1"></a>  <span class="fu">embed</span>(<span class="fu">ollama</span>())</span></code></pre></div>
 <pre><code>## # A tibble: 3 × 2
 ##   input                                  embeddings 
 ##   &lt;chr&gt;                                  &lt;list&gt;     
@@ -847,14 +861,14 @@ The output is a tibble with one row per input:</p>
 ## 3 How does the brain work?               &lt;dbl [384]&gt;</code></pre>
 <p>Voyage AI supports <strong>multimodal embeddings</strong>, meaning
 text and images share the same vector space:</p>
-<div class="sourceCode" id="cb45"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb45-1"><a href="#cb45-1" tabindex="-1"></a><span class="fu">list</span>(<span class="st">&quot;tidyllm logo&quot;</span>, <span class="fu">img</span>(<span class="st">&quot;docs/logo.png&quot;</span>)) <span class="sc">|&gt;</span></span>
-<span id="cb45-2"><a href="#cb45-2" tabindex="-1"></a>  <span class="fu">embed</span>(<span class="fu">voyage</span>())</span></code></pre></div>
+<div class="sourceCode" id="cb44"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb44-1"><a href="#cb44-1" tabindex="-1"></a><span class="fu">list</span>(<span class="st">&quot;tidyllm logo&quot;</span>, <span class="fu">img</span>(<span class="st">&quot;docs/logo.png&quot;</span>)) <span class="sc">|&gt;</span></span>
+<span id="cb44-2"><a href="#cb44-2" tabindex="-1"></a>  <span class="fu">embed</span>(<span class="fu">voyage</span>())</span></code></pre></div>
 <p><code>voyage_rerank()</code> re-orders documents by relevance to a
 query:</p>
-<div class="sourceCode" id="cb46"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb46-1"><a href="#cb46-1" tabindex="-1"></a><span class="fu">voyage_rerank</span>(</span>
-<span id="cb46-2"><a href="#cb46-2" tabindex="-1"></a>  <span class="st">&quot;best R package for LLMs&quot;</span>,</span>
-<span id="cb46-3"><a href="#cb46-3" tabindex="-1"></a>  <span class="fu">c</span>(<span class="st">&quot;tidyllm&quot;</span>, <span class="st">&quot;ellmer&quot;</span>, <span class="st">&quot;httr2&quot;</span>, <span class="st">&quot;rvest&quot;</span>)</span>
-<span id="cb46-4"><a href="#cb46-4" tabindex="-1"></a>)</span></code></pre></div>
+<div class="sourceCode" id="cb45"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb45-1"><a href="#cb45-1" tabindex="-1"></a><span class="fu">voyage_rerank</span>(</span>
+<span id="cb45-2"><a href="#cb45-2" tabindex="-1"></a>  <span class="st">&quot;best R package for LLMs&quot;</span>,</span>
+<span id="cb45-3"><a href="#cb45-3" tabindex="-1"></a>  <span class="fu">c</span>(<span class="st">&quot;tidyllm&quot;</span>, <span class="st">&quot;ellmer&quot;</span>, <span class="st">&quot;httr2&quot;</span>, <span class="st">&quot;rvest&quot;</span>)</span>
+<span id="cb45-4"><a href="#cb45-4" tabindex="-1"></a>)</span></code></pre></div>
 </div>
 <div id="batch-requests" class="section level2">
 <h2>Batch Requests</h2>
@@ -863,52 +877,52 @@ numbers of requests overnight at roughly half the cost of standard
 calls. Use <code>send_batch()</code> to submit,
 <code>check_batch()</code> to poll status, and
 <code>fetch_batch()</code> to retrieve results:</p>
-<div class="sourceCode" id="cb47"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb47-1"><a href="#cb47-1" tabindex="-1"></a><span class="co"># Submit a batch and save the job handle to disk</span></span>
-<span id="cb47-2"><a href="#cb47-2" tabindex="-1"></a>glue<span class="sc">::</span><span class="fu">glue</span>(<span class="st">&quot;Write a poem about {x}&quot;</span>, <span class="at">x =</span> <span class="fu">c</span>(<span class="st">&quot;cats&quot;</span>, <span class="st">&quot;dogs&quot;</span>, <span class="st">&quot;hamsters&quot;</span>)) <span class="sc">|&gt;</span></span>
-<span id="cb47-3"><a href="#cb47-3" tabindex="-1"></a>  purrr<span class="sc">::</span><span class="fu">map</span>(llm_message) <span class="sc">|&gt;</span></span>
-<span id="cb47-4"><a href="#cb47-4" tabindex="-1"></a>  <span class="fu">send_batch</span>(<span class="fu">claude</span>()) <span class="sc">|&gt;</span></span>
-<span id="cb47-5"><a href="#cb47-5" tabindex="-1"></a>  <span class="fu">saveRDS</span>(<span class="st">&quot;claude_batch.rds&quot;</span>)</span></code></pre></div>
-<div class="sourceCode" id="cb48"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb48-1"><a href="#cb48-1" tabindex="-1"></a><span class="co"># Check status</span></span>
-<span id="cb48-2"><a href="#cb48-2" tabindex="-1"></a><span class="fu">readRDS</span>(<span class="st">&quot;claude_batch.rds&quot;</span>) <span class="sc">|&gt;</span></span>
-<span id="cb48-3"><a href="#cb48-3" tabindex="-1"></a>  <span class="fu">check_batch</span>(<span class="fu">claude</span>())</span></code></pre></div>
+<div class="sourceCode" id="cb46"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb46-1"><a href="#cb46-1" tabindex="-1"></a><span class="co"># Submit a batch and save the job handle to disk</span></span>
+<span id="cb46-2"><a href="#cb46-2" tabindex="-1"></a>glue<span class="sc">::</span><span class="fu">glue</span>(<span class="st">&quot;Write a poem about {x}&quot;</span>, <span class="at">x =</span> <span class="fu">c</span>(<span class="st">&quot;cats&quot;</span>, <span class="st">&quot;dogs&quot;</span>, <span class="st">&quot;hamsters&quot;</span>)) <span class="sc">|&gt;</span></span>
+<span id="cb46-3"><a href="#cb46-3" tabindex="-1"></a>  purrr<span class="sc">::</span><span class="fu">map</span>(llm_message) <span class="sc">|&gt;</span></span>
+<span id="cb46-4"><a href="#cb46-4" tabindex="-1"></a>  <span class="fu">send_batch</span>(<span class="fu">claude</span>()) <span class="sc">|&gt;</span></span>
+<span id="cb46-5"><a href="#cb46-5" tabindex="-1"></a>  <span class="fu">saveRDS</span>(<span class="st">&quot;claude_batch.rds&quot;</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb47"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb47-1"><a href="#cb47-1" tabindex="-1"></a><span class="co"># Check status</span></span>
+<span id="cb47-2"><a href="#cb47-2" tabindex="-1"></a><span class="fu">readRDS</span>(<span class="st">&quot;claude_batch.rds&quot;</span>) <span class="sc">|&gt;</span></span>
+<span id="cb47-3"><a href="#cb47-3" tabindex="-1"></a>  <span class="fu">check_batch</span>(<span class="fu">claude</span>())</span></code></pre></div>
 <pre><code>## # A tibble: 1 × 8
 ##   batch_id          status created_at          expires_at          req_succeeded
 ##   &lt;chr&gt;             &lt;chr&gt;  &lt;dttm&gt;              &lt;dttm&gt;                      &lt;int&gt;
 ## 1 msgbatch_02A1B2C… ended  2025-11-01 10:30:00 2025-11-02 10:30:00             3
 ## # ℹ 3 more variables: req_errored &lt;int&gt;, req_expired &lt;int&gt;, req_canceled &lt;int&gt;</code></pre>
-<div class="sourceCode" id="cb50"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb50-1"><a href="#cb50-1" tabindex="-1"></a><span class="co"># Fetch completed results</span></span>
-<span id="cb50-2"><a href="#cb50-2" tabindex="-1"></a>conversations <span class="ot">&lt;-</span> <span class="fu">readRDS</span>(<span class="st">&quot;claude_batch.rds&quot;</span>) <span class="sc">|&gt;</span></span>
-<span id="cb50-3"><a href="#cb50-3" tabindex="-1"></a>  <span class="fu">fetch_batch</span>(<span class="fu">claude</span>())</span>
-<span id="cb50-4"><a href="#cb50-4" tabindex="-1"></a></span>
-<span id="cb50-5"><a href="#cb50-5" tabindex="-1"></a>poems <span class="ot">&lt;-</span> purrr<span class="sc">::</span><span class="fu">map_chr</span>(conversations, get_reply)</span></code></pre></div>
+<div class="sourceCode" id="cb49"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb49-1"><a href="#cb49-1" tabindex="-1"></a><span class="co"># Fetch completed results</span></span>
+<span id="cb49-2"><a href="#cb49-2" tabindex="-1"></a>conversations <span class="ot">&lt;-</span> <span class="fu">readRDS</span>(<span class="st">&quot;claude_batch.rds&quot;</span>) <span class="sc">|&gt;</span></span>
+<span id="cb49-3"><a href="#cb49-3" tabindex="-1"></a>  <span class="fu">fetch_batch</span>(<span class="fu">claude</span>())</span>
+<span id="cb49-4"><a href="#cb49-4" tabindex="-1"></a></span>
+<span id="cb49-5"><a href="#cb49-5" tabindex="-1"></a>poems <span class="ot">&lt;-</span> purrr<span class="sc">::</span><span class="fu">map_chr</span>(conversations, get_reply)</span></code></pre></div>
 <p><code>check_job()</code> and <code>fetch_job()</code> are
-type-dispatching aliases; they work on both batch objects and Perplexity
+type-dispatching aliases; they work on both batch objects and background
 research jobs (see <code>deep_research()</code> below).</p>
 </div>
 <div id="deep-research" class="section level2">
 <h2>Deep Research</h2>
 <p>For long-horizon research tasks, <code>deep_research()</code> runs an
-extended web search and synthesis. Perplexity’s
-<code>sonar-deep-research</code> model is currently supported:</p>
-<div class="sourceCode" id="cb51"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb51-1"><a href="#cb51-1" tabindex="-1"></a><span class="co"># Blocking: waits for completion, returns an LLMMessage</span></span>
-<span id="cb51-2"><a href="#cb51-2" tabindex="-1"></a>result <span class="ot">&lt;-</span> <span class="fu">llm_message</span>(<span class="st">&quot;Compare Rust and Go for systems programming in 2025.&quot;</span>) <span class="sc">|&gt;</span></span>
-<span id="cb51-3"><a href="#cb51-3" tabindex="-1"></a>  <span class="fu">deep_research</span>(<span class="fu">perplexity</span>())</span>
+extended web search and synthesis. It is available for
+<code>openai()</code>, which runs the research with web search in the
+background and returns the finished report:</p>
+<div class="sourceCode" id="cb50"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb50-1"><a href="#cb50-1" tabindex="-1"></a><span class="co"># Blocking: waits for completion, returns an LLMMessage</span></span>
+<span id="cb50-2"><a href="#cb50-2" tabindex="-1"></a>result <span class="ot">&lt;-</span> <span class="fu">llm_message</span>(<span class="st">&quot;Compare Rust and Go for systems programming in 2026.&quot;</span>) <span class="sc">|&gt;</span></span>
+<span id="cb50-3"><a href="#cb50-3" tabindex="-1"></a>  <span class="fu">deep_research</span>(<span class="fu">openai</span>())</span>
+<span id="cb50-4"><a href="#cb50-4" tabindex="-1"></a></span>
+<span id="cb50-5"><a href="#cb50-5" tabindex="-1"></a><span class="fu">get_reply</span>(result)</span></code></pre></div>
+<div class="sourceCode" id="cb51"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb51-1"><a href="#cb51-1" tabindex="-1"></a><span class="co"># Background mode: returns a job handle immediately</span></span>
+<span id="cb51-2"><a href="#cb51-2" tabindex="-1"></a>job <span class="ot">&lt;-</span> <span class="fu">llm_message</span>(<span class="st">&quot;Summarise recent EU AI Act developments.&quot;</span>) <span class="sc">|&gt;</span></span>
+<span id="cb51-3"><a href="#cb51-3" tabindex="-1"></a>  <span class="fu">deep_research</span>(<span class="fu">openai</span>(), <span class="at">.background =</span> <span class="cn">TRUE</span>)</span>
 <span id="cb51-4"><a href="#cb51-4" tabindex="-1"></a></span>
-<span id="cb51-5"><a href="#cb51-5" tabindex="-1"></a><span class="fu">get_reply</span>(result)</span>
-<span id="cb51-6"><a href="#cb51-6" tabindex="-1"></a><span class="fu">get_metadata</span>(result)<span class="sc">$</span>api_specific[[<span class="dv">1</span>]]<span class="sc">$</span>citations</span></code></pre></div>
-<div class="sourceCode" id="cb52"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb52-1"><a href="#cb52-1" tabindex="-1"></a><span class="co"># Background mode: returns a job handle immediately</span></span>
-<span id="cb52-2"><a href="#cb52-2" tabindex="-1"></a>job <span class="ot">&lt;-</span> <span class="fu">llm_message</span>(<span class="st">&quot;Summarise recent EU AI Act developments.&quot;</span>) <span class="sc">|&gt;</span></span>
-<span id="cb52-3"><a href="#cb52-3" tabindex="-1"></a>  <span class="fu">deep_research</span>(<span class="fu">perplexity</span>(), <span class="at">.background =</span> <span class="cn">TRUE</span>)</span>
-<span id="cb52-4"><a href="#cb52-4" tabindex="-1"></a></span>
-<span id="cb52-5"><a href="#cb52-5" tabindex="-1"></a><span class="fu">check_job</span>(job)           <span class="co"># poll status</span></span>
-<span id="cb52-6"><a href="#cb52-6" tabindex="-1"></a>result <span class="ot">&lt;-</span> <span class="fu">fetch_job</span>(job) <span class="co"># retrieve when complete</span></span></code></pre></div>
+<span id="cb51-5"><a href="#cb51-5" tabindex="-1"></a><span class="fu">check_job</span>(job)           <span class="co"># poll status</span></span>
+<span id="cb51-6"><a href="#cb51-6" tabindex="-1"></a>result <span class="ot">&lt;-</span> <span class="fu">fetch_job</span>(job) <span class="co"># retrieve when complete</span></span></code></pre></div>
 </div>
 <div id="streaming" class="section level2">
 <h2>Streaming</h2>
 <p>Stream reply tokens to the console as they are generated with
 <code>.stream = TRUE</code>:</p>
-<div class="sourceCode" id="cb53"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb53-1"><a href="#cb53-1" tabindex="-1"></a><span class="fu">llm_message</span>(<span class="st">&quot;Write a short poem about R.&quot;</span>) <span class="sc">|&gt;</span></span>
-<span id="cb53-2"><a href="#cb53-2" tabindex="-1"></a>  <span class="fu">chat</span>(<span class="fu">claude</span>(), <span class="at">.stream =</span> <span class="cn">TRUE</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb52"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb52-1"><a href="#cb52-1" tabindex="-1"></a><span class="fu">llm_message</span>(<span class="st">&quot;Write a short poem about R.&quot;</span>) <span class="sc">|&gt;</span></span>
+<span id="cb52-2"><a href="#cb52-2" tabindex="-1"></a>  <span class="fu">chat</span>(<span class="fu">claude</span>(), <span class="at">.stream =</span> <span class="cn">TRUE</span>)</span></code></pre></div>
 <p>Streaming is useful for monitoring long responses interactively. For
 production data-analysis workflows the non-streaming mode is preferred
 because it provides complete metadata and is more reliable.</p>
@@ -935,15 +949,14 @@ tidyllm in Shiny</a>, and the example app it walks through:
 <tbody>
 <tr class="odd">
 <td><code>openai()</code></td>
-<td>Top benchmark performance across coding, math, and reasoning;
-<code>o3</code>/<code>o4</code> reasoning models; built-in web search
-via <code>openai_websearch()</code>; Files API</td>
+<td>GPT-6 model line with <code>.thinking</code> effort levels;
+<code>deep_research()</code>; built-in web search via
+<code>openai_websearch()</code>; Files API</td>
 </tr>
 <tr class="even">
 <td><code>claude()</code></td>
-<td>Best-in-class coding (SWE-bench leader);
-<code>.thinking = TRUE</code> for extended reasoning; Files API for
-document workflows; batch</td>
+<td>Strong at coding and long documents; <code>.thinking = TRUE</code>
+for extended reasoning; Files API for document workflows; batch</td>
 </tr>
 <tr class="odd">
 <td><code>gemini()</code></td>
@@ -963,7 +976,8 @@ models (<code>.media = audio_file()</code>); embeddings; batch</td>
 <code>.json_schema</code>; batch</td>
 </tr>
 <tr class="even">
-<td><code>perplexity()</code></td>
+<td><code>perplexity()</code> (deprecated since 0.7.0, removed in 0.8.0;
+use <code>openrouter(.model = &quot;perplexity/sonar&quot;)</code>)</td>
 <td>Real-time web search with citations in metadata;
 <code>deep_research()</code> for long-horizon research; search domain
 filter</td>
@@ -971,8 +985,8 @@ filter</td>
 <tr class="odd">
 <td><code>deepseek()</code></td>
 <td>Top math and reasoning benchmarks at very low cost;
-<code>.thinking = TRUE</code> auto-switches to
-<code>deepseek-reasoner</code></td>
+<code>.thinking = TRUE</code> turns on thinking mode and returns the
+reasoning trace in metadata</td>
 </tr>
 <tr class="even">
 <td><code>voyage()</code></td>
@@ -984,6 +998,16 @@ multimodal embeddings (text + images);
 <td><code>openrouter()</code></td>
 <td>500+ models via one API key; audio and video support on Gemini, Qwen
 3.6, and other multimodal routes; automatic fallback routing</td>
+</tr>
+<tr class="even">
+<td><code>claude_cli()</code></td>
+<td>Runs your own installed and signed-in <code>claude</code> command
+line tool; no API key, usage counts against the CLI’s plan; CLI tools
+are off unless you allow them with <code>.cli_tools</code></td>
+</tr>
+<tr class="odd">
+<td><code>ellmer()</code></td>
+<td>Use any ellmer chat object as a tidyllm provider</td>
 </tr>
 <tr class="even">
 <td><code>ollama()</code></td>
@@ -1004,13 +1028,37 @@ constraints; logprobs; <code>llamacpp_rerank()</code></td>
 </table>
 <p>For getting started with local models (Ollama and llama.cpp), see the
 Local Models article on the tidyllm website.</p>
+<div id="checking-what-a-provider-supports" class="section level3">
+<h3>Checking What a Provider Supports</h3>
+<p><code>provider_capabilities()</code> answers “can this provider do
+that?” without reading each help page. With a provider call it lists
+every verb the provider implements, each verb’s arguments, the default
+of each argument as R code, and the function (<code>fn</code>) whose
+help page documents it:</p>
+<div class="sourceCode" id="cb53"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb53-1"><a href="#cb53-1" tabindex="-1"></a><span class="fu">provider_capabilities</span>(<span class="fu">claude</span>(), <span class="at">.verb =</span> <span class="st">&quot;chat&quot;</span>)</span>
+<span id="cb53-2"><a href="#cb53-2" tabindex="-1"></a></span>
+<span id="cb53-3"><a href="#cb53-3" tabindex="-1"></a><span class="co"># Which providers accept .thinking, and for which verbs?</span></span>
+<span id="cb53-4"><a href="#cb53-4" tabindex="-1"></a><span class="fu">provider_capabilities</span>(<span class="at">.argument =</span> <span class="st">&quot;.thinking&quot;</span>)</span>
+<span id="cb53-5"><a href="#cb53-5" tabindex="-1"></a></span>
+<span id="cb53-6"><a href="#cb53-6" tabindex="-1"></a><span class="co"># Default chat model of every provider</span></span>
+<span id="cb53-7"><a href="#cb53-7" tabindex="-1"></a><span class="fu">provider_capabilities</span>(<span class="at">.verb =</span> <span class="st">&quot;chat&quot;</span>, <span class="at">.argument =</span> <span class="st">&quot;.model&quot;</span>)</span>
+<span id="cb53-8"><a href="#cb53-8" tabindex="-1"></a></span>
+<span id="cb53-9"><a href="#cb53-9" tabindex="-1"></a><span class="co"># Which media types each provider takes in a message</span></span>
+<span id="cb53-10"><a href="#cb53-10" tabindex="-1"></a><span class="fu">provider_capabilities</span>(<span class="at">.what =</span> <span class="st">&quot;media&quot;</span>)</span></code></pre></div>
+<p>The result is an ordinary tibble, so filter and reshape it as usual.
+An argument in the table means the provider’s function accepts it; an
+individual model can still reject a value, for example some reasoning
+effort levels. The attachment check in <code>chat()</code> reads the
+same media table, so a message with audio sent to a provider that lists
+no audio support fails before any request is made.</p>
+</div>
 </div>
 <div id="setting-a-default-provider" class="section level2">
 <h2>Setting a Default Provider</h2>
 <p>Avoid specifying a provider on every call by setting options:</p>
-<div class="sourceCode" id="cb54"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb54-1"><a href="#cb54-1" tabindex="-1"></a><span class="fu">options</span>(<span class="at">tidyllm_chat_default   =</span> <span class="fu">openai</span>(<span class="at">.model =</span> <span class="st">&quot;gpt-5.6-terra&quot;</span>))</span>
+<div class="sourceCode" id="cb54"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb54-1"><a href="#cb54-1" tabindex="-1"></a><span class="fu">options</span>(<span class="at">tidyllm_chat_default   =</span> <span class="fu">openai</span>(<span class="at">.model =</span> <span class="st">&quot;gpt-6-luna&quot;</span>))</span>
 <span id="cb54-2"><a href="#cb54-2" tabindex="-1"></a><span class="fu">options</span>(<span class="at">tidyllm_embed_default  =</span> <span class="fu">ollama</span>())</span>
-<span id="cb54-3"><a href="#cb54-3" tabindex="-1"></a><span class="fu">options</span>(<span class="at">tidyllm_sbatch_default =</span> <span class="fu">claude</span>(<span class="at">.temperature =</span> <span class="dv">0</span>))</span>
+<span id="cb54-3"><a href="#cb54-3" tabindex="-1"></a><span class="fu">options</span>(<span class="at">tidyllm_sbatch_default =</span> <span class="fu">claude</span>())</span>
 <span id="cb54-4"><a href="#cb54-4" tabindex="-1"></a><span class="fu">options</span>(<span class="at">tidyllm_cbatch_default =</span> <span class="fu">claude</span>())</span>
 <span id="cb54-5"><a href="#cb54-5" tabindex="-1"></a><span class="fu">options</span>(<span class="at">tidyllm_fbatch_default =</span> <span class="fu">claude</span>())</span>
 <span id="cb54-6"><a href="#cb54-6" tabindex="-1"></a><span class="fu">options</span>(<span class="at">tidyllm_lbatch_default =</span> <span class="fu">claude</span>())</span>

@@ -44,7 +44,7 @@ knitr::include_graphics("picture.jpeg")
 # # Single image
 # image_description <- llm_message("Describe this picture. Can you guess where it was taken?",
 #                                   .media = img("picture.jpeg")) |>
-#   chat(openai(.model = "gpt-5.6-terra"))
+#   chat(openai(.model = "gpt-6-luna"))
 # 
 # get_reply(image_description)
 
@@ -113,7 +113,7 @@ ggplot(mtcars, aes(wt, mpg)) +
 
 ## ----routputs_fake, eval=TRUE, echo=FALSE-------------------------------------
 llm_message("Analyze this plot and data summary:",
-            .imagefile = "file1568f6c1b4565.png",
+            .media = img("file1568f6c1b4565.png"),
             .f = ~{summary(mtcars)}) |>
   llm_message("The scatter plot shows a clear negative correlation between weight and fuel efficiency. Heavier cars consistently achieve lower mpg, with the linear trend confirming this relationship. Variability around the line suggests other factors, engine size and transmission, also play a role.", .role = "assistant")
 
@@ -144,7 +144,7 @@ conversation |> as_tibble()
 
 ## ----get_metadata_out, eval=TRUE, echo=FALSE----------------------------------
 tibble::tibble(
-  model             = c("groq-model", "claude-sonnet-5"),
+  model             = c("groq-model", "claude-sonnet-5-5"),
   timestamp         = as.POSIXct(c("2026-07-08 14:25:43", "2026-07-08 14:26:02")),
   prompt_tokens     = c(20L, 80L),
   completion_tokens = c(45L, 40L),
@@ -216,7 +216,7 @@ data.frame(
 # 
 # # Provider-specific args in the provider
 # llm_message("Hello") |>
-#   chat(ollama(.ollama_server = "http://my-server:11434"), .temperature = 0)
+#   chat(ollama(.ollama_server = Sys.getenv("OLLAMA_SERVER")), .temperature = 0)
 
 ## ----eval=FALSE---------------------------------------------------------------
 # get_current_time <- function(tz, format = "%Y-%m-%d %H:%M:%S") {
@@ -295,16 +295,15 @@ tibble::tribble(
 
 ## ----eval=FALSE---------------------------------------------------------------
 # # Blocking: waits for completion, returns an LLMMessage
-# result <- llm_message("Compare Rust and Go for systems programming in 2025.") |>
-#   deep_research(perplexity())
+# result <- llm_message("Compare Rust and Go for systems programming in 2026.") |>
+#   deep_research(openai())
 # 
 # get_reply(result)
-# get_metadata(result)$api_specific[[1]]$citations
 
 ## ----eval=FALSE---------------------------------------------------------------
 # # Background mode: returns a job handle immediately
 # job <- llm_message("Summarise recent EU AI Act developments.") |>
-#   deep_research(perplexity(), .background = TRUE)
+#   deep_research(openai(), .background = TRUE)
 # 
 # check_job(job)           # poll status
 # result <- fetch_job(job) # retrieve when complete
@@ -314,9 +313,21 @@ tibble::tribble(
 #   chat(claude(), .stream = TRUE)
 
 ## ----eval=FALSE---------------------------------------------------------------
-# options(tidyllm_chat_default   = openai(.model = "gpt-5.6-terra"))
+# provider_capabilities(claude(), .verb = "chat")
+# 
+# # Which providers accept .thinking, and for which verbs?
+# provider_capabilities(.argument = ".thinking")
+# 
+# # Default chat model of every provider
+# provider_capabilities(.verb = "chat", .argument = ".model")
+# 
+# # Which media types each provider takes in a message
+# provider_capabilities(.what = "media")
+
+## ----eval=FALSE---------------------------------------------------------------
+# options(tidyllm_chat_default   = openai(.model = "gpt-6-luna"))
 # options(tidyllm_embed_default  = ollama())
-# options(tidyllm_sbatch_default = claude(.temperature = 0))
+# options(tidyllm_sbatch_default = claude())
 # options(tidyllm_cbatch_default = claude())
 # options(tidyllm_fbatch_default = claude())
 # options(tidyllm_lbatch_default = claude())
