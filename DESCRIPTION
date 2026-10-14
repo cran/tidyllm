@@ -1,6 +1,6 @@
 Package: tidyllm
 Title: Tidy Integration of Large Language Models
-Version: 0.7.0
+Version: 0.7.1
 Authors@R: c(
     person("Eduard", "Brüll", NULL, "eduard.bruell@zew.de", role = c("aut", "cre")),
     person("Jia", "Zhang", NULL, NULL, role = "ctb")
@@ -27,15 +27,16 @@ Collate: 'tidyllm-package.R' 'utilites.R' 'embedding_helpers.R'
         'tools.R' 'websearch.R' 'api_chat_completions.R' 'api_openai.R'
         'api_azure_openai.R' 'api_groq.R' 'api_mistral.R'
         'api_perplexity.R' 'api_deepseek.R' 'api_voyage.R'
-        'api_ollama.R' 'api_claude.R' 'api_claude_cli.R' 'api_gemini.R'
-        'api_ellmer.R' 'api_openrouter.R' 'api_llamacpp.R' 'pdfbatch.R'
-        'zzz.R'
+        'api_ollama.R' 'api_claude.R' 'cli_process.R'
+        'api_claude_cli.R' 'api_codex_cli.R' 'api_vibe_cli.R'
+        'api_gemini.R' 'api_ellmer.R' 'api_openrouter.R'
+        'api_llamacpp.R' 'pdfbatch.R' 'zzz.R'
 Depends: R (>= 4.2.0)
 Config/testthat/edition: 3
 NeedsCompilation: no
-Packaged: 2026-10-05 13:01:38 UTC; ebr
+Packaged: 2026-10-14 08:15:58 UTC; ebr
 Author: Eduard Brüll [aut, cre],
   Jia Zhang [ctb]
 Maintainer: Eduard Brüll <eduard.bruell@zew.de>
 Repository: CRAN
-Date/Publication: 2026-10-05 13:40:02 UTC
+Date/Publication: 2026-10-14 08:40:02 UTC

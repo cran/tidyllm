@@ -447,9 +447,13 @@ API key guide</a></td>
 </tr>
 </tbody>
 </table>
-<p><code>claude_cli()</code> needs no key: it runs the
-<code>claude</code> command line tool that is already installed and
-signed in on your machine.</p>
+<p>Three providers run a command line tool installed on your machine
+instead of calling an API from R. <code>claude_cli()</code> uses the
+login of the <code>claude</code> tool and needs no key.
+<code>codex_cli()</code> uses Codex’s own login, or
+<code>OPENAI_API_KEY</code> with <code>.use_api_key = TRUE</code>.
+<code>vibe_cli()</code> uses <code>MISTRAL_API_KEY</code>, or the key
+Vibe saved during its own setup.</p>
 </div>
 <div id="running-local-models" class="section level3">
 <h3>Running Local Models</h3>
@@ -503,9 +507,10 @@ pattern:</p>
 <code>list_files()</code>, <code>file_info()</code>,
 <code>delete_file()</code></li>
 <li><strong>Providers</strong> specify the API: <code>openai()</code>,
-<code>claude()</code>, <code>claude_cli()</code>, <code>gemini()</code>,
-<code>ollama()</code>, <code>mistral()</code>, <code>groq()</code>,
-<code>deepseek()</code>, <code>voyage()</code>,
+<code>claude()</code>, <code>claude_cli()</code>,
+<code>codex_cli()</code>, <code>vibe_cli()</code>,
+<code>gemini()</code>, <code>ollama()</code>, <code>mistral()</code>,
+<code>groq()</code>, <code>deepseek()</code>, <code>voyage()</code>,
 <code>openrouter()</code>, <code>llamacpp()</code>,
 <code>azure_openai()</code>, <code>ellmer()</code></li>
 </ul>
@@ -961,13 +966,15 @@ for extended reasoning; Files API for document workflows; batch</td>
 <tr class="odd">
 <td><code>gemini()</code></td>
 <td>1M-token context window; native image, audio, and video via
-<code>.media</code>; search grounding; <code>.thinking_budget</code> for
+<code>.media</code>; search grounding; <code>.thinking_level</code> for
 reasoning; Files API; batch</td>
 </tr>
 <tr class="even">
 <td><code>mistral()</code></td>
-<td>EU-hosted, GDPR-friendly; Magistral reasoning models; Voxtral audio
-models (<code>.media = audio_file()</code>); embeddings; batch</td>
+<td>EU-hosted, GDPR-friendly; Magistral and Mistral Large 4 reasoning
+models (<code>.reasoning_effort = &quot;none&quot;</code> turns reasoning off on
+Large 4); Voxtral audio models (<code>.media = audio_file()</code>);
+embeddings; batch</td>
 </tr>
 <tr class="odd">
 <td><code>groq()</code></td>
@@ -1004,6 +1011,20 @@ multimodal embeddings (text + images);
 <td>Runs your own installed and signed-in <code>claude</code> command
 line tool; no API key, usage counts against the CLI’s plan; CLI tools
 are off unless you allow them with <code>.cli_tools</code></td>
+</tr>
+<tr class="odd">
+<td><code>codex_cli()</code></td>
+<td>Runs your own installed <code>codex</code> command line tool, signed
+in or with <code>OPENAI_API_KEY</code>; token counts,
+<code>.reasoning_effort</code>, <code>.json_schema</code>; its shell and
+browser tools are off unless <code>.cli_tools = TRUE</code></td>
+</tr>
+<tr class="even">
+<td><code>vibe_cli()</code></td>
+<td>Runs your own installed Mistral <code>vibe</code> command line tool
+with <code>MISTRAL_API_KEY</code>; any Mistral model via
+<code>.model</code>; no token counts; its tools are off unless
+<code>.cli_tools = TRUE</code></td>
 </tr>
 <tr class="odd">
 <td><code>ellmer()</code></td>
@@ -1047,10 +1068,13 @@ help page documents it:</p>
 <span id="cb53-10"><a href="#cb53-10" tabindex="-1"></a><span class="fu">provider_capabilities</span>(<span class="at">.what =</span> <span class="st">&quot;media&quot;</span>)</span></code></pre></div>
 <p>The result is an ordinary tibble, so filter and reshape it as usual.
 An argument in the table means the provider’s function accepts it; an
-individual model can still reject a value, for example some reasoning
-effort levels. The attachment check in <code>chat()</code> reads the
-same media table, so a message with audio sent to a provider that lists
-no audio support fails before any request is made.</p>
+individual model can still reject a value (Mistral Large 4 accepts only
+<code>&quot;high&quot;</code> and <code>&quot;none&quot;</code> for
+<code>.reasoning_effort</code>) or ignore it (Gemini 3.6 Flash and later
+ignore <code>.temperature</code>, <code>.top_p</code> and
+<code>.top_k</code>). The attachment check in <code>chat()</code> reads
+the same media table, so a message with audio sent to a provider that
+lists no audio support fails before any request is made.</p>
 </div>
 </div>
 <div id="setting-a-default-provider" class="section level2">
