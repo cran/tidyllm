@@ -1,4 +1,6 @@
 MEDIA_TYPES <- c("image", "pdf", "audio", "video", "files")
+EMBED_MEDIA_TYPES <- c("image", "audio", "video")
+DECIDE_MEDIA_TYPES <- c("image", "audio", "video", "pdf")
 
 #' The message a provider gets when it cannot do a verb at all
 #' @noRd
@@ -60,11 +62,18 @@ dispatch_to_provider <- function(provider_expr, verb_name, common_args,
 #' @param .media Character vector of the media types the provider accepts in a message:
 #'   any of `"image"`, `"pdf"`, `"audio"`, `"video"` and `"files"` (remote file
 #'   references). Read by the attachment check and by `provider_capabilities()`.
+#' @param .embed_media Character vector of the media types the provider embeds:
+#'   any of `"image"`, `"audio"` and `"video"`. Read by `embed()` and by
+#'   `provider_capabilities()`.
+#' @param .decide_media Character vector of the media types the provider reads in a
+#'   `decide()` state: any of `"image"`, `"audio"`, `"video"` and `"pdf"`. Read by
+#'   `decide()` and by `provider_capabilities()`.
 #'
 #' @return A function that dynamically routes to the appropriate action based on its
 #'   inputs.
 #' @noRd
-create_provider_function <- function(.name, ..., .media = character()) {
+create_provider_function <- function(.name, ..., .media = character(), .embed_media = character(),
+                                     .decide_media = character()) {
   function_map <- list(...)
   function_names <- vapply(
     as.list(substitute(list(...)))[-1],
@@ -72,7 +81,11 @@ create_provider_function <- function(.name, ..., .media = character()) {
     character(1)
   )
   c(".media must contain only: image, pdf, audio, video, files" =
-      all(.media %in% MEDIA_TYPES)) |> validate_inputs()
+      all(.media %in% MEDIA_TYPES),
+    ".embed_media must contain only: image, audio, video" =
+      all(.embed_media %in% EMBED_MEDIA_TYPES),
+    ".decide_media must contain only: image, audio, video, pdf" =
+      all(.decide_media %in% DECIDE_MEDIA_TYPES)) |> validate_inputs()
   
   if ("metadata" %in% names(function_map)) {
     stop(glue::glue("'metadata' is a reserved keyword and cannot be used as a function name in provider '{.name}'."))
@@ -99,7 +112,9 @@ create_provider_function <- function(.name, ..., .media = character()) {
           supported_args = supported_args,
           supported_defaults = supported_defaults,
           functions = function_names,
-          media = .media
+          media = .media,
+          embed_media = .embed_media,
+          decide_media = .decide_media
         ))
       } else if (.called_from %in% names(function_map)) {
         # Call the appropriate function
@@ -253,7 +268,11 @@ chat <- function(
 #' The `embed()` function allows you to embed a text via a specified provider.
 #' It routes the input to the appropriate provider-specific embedding function.
 #'
-#' @param .input  A character vector of texts v, a list of texts and image objects,  or an `LLMMessage` object
+#' @param .input  A character vector of texts, a list mixing texts with `img()`, `audio_file()`
+#'   and `video_file()` objects, or an `LLMMessage` object. Each element of a list is embedded
+#'   as its own row. A nested list, such as `list(list("A cat", img("cat.jpg")))`, is one
+#'   fused item that gets a single vector. `provider_capabilities(.what = "embed_media")` shows
+#'   which provider embeds which media type.
 #' @param .provider A function or function call specifying the language model provider and any additional parameters.
 #'   This should be a call to a provider function like `openai()`, `ollama()`, etc. 
 #'   You can also set a default provider function via the `tidyllm_embed_default` option.
@@ -262,8 +281,22 @@ chat <- function(
 #' @param .timeout Timeout for the API request in seconds
 #' @param .dry_run If TRUE, perform a dry run and return the request object.
 #' @param .max_tries Maximum retry attempts for requests
-#' @return A tibble with two columns: `input` and `embeddings`. 
-#' The `input` column contains the texts sent to embed, and the `embeddings` column 
+#' @param .task `"query"` or `"document"`. Adds the task prefix that EmbeddingGemma 2 and
+#'   `gemini-embedding-2` read from the text (and sets `input_type` for `voyage()`).
+#'   Media get no prefix. Leave `NULL` for models that take no prefix.
+#' @param .dimensions Number of dimensions to return, for providers and models that
+#'   can shorten their vectors: `gemini()`, `openrouter()`, `ollama()`, `openai()` (`text-embedding-3` models) and `mistral()` (`codestral-embed`).
+#'   `voyage()` calls this argument `.output_dimension`. `llamacpp()` has no such argument, because llama-server ignores it.
+#' @param .media_columns If `TRUE`, add a `modality` and a `path` column after `input`.
+#'   `modality` is `"text"`, `"image"`, `"audio"` or `"video"`; a fused item lists its parts
+#'   joined by `" + "`, such as `"text + image"`. `path` holds the file path of the media
+#'   in the item (joined by `" + "` for several files) and is `NA` for text. Has no effect with
+#'   `.dry_run = TRUE`, which returns the request. Defaults to `FALSE`.
+#' @return A tibble with the columns `input` and `embeddings`, plus `modality` and `path`
+#' when `.media_columns = TRUE`.
+#' The `input` column contains the texts sent to embed, or a label such as
+#' `[IMG] cat.jpg` for a media file. A fused item shows its parts joined by `" + "`, for
+#' example `A cat + [IMG] cat.jpg`. The `embeddings` column
 #' is a list column where each row contains an embedding vector of the sent input.
 #' @examples
 #' \dontrun{
@@ -279,13 +312,16 @@ embed <- function(.input,
                   .truncate=NULL,
                   .timeout=NULL,
                   .dry_run=NULL,
-                  .max_tries=NULL) {
+                  .max_tries=NULL,
+                  .task=NULL,
+                  .dimensions=NULL,
+                  .media_columns=FALSE) {
 
-  # Validate the inputs
   c(
-    "Input .input must be a character vector, a list or an LLMMessage object" = S7_inherits(.input, LLMMessage) | is.character(.input) | is.list(.input),
-    "You need to specify a .provider function in embed()" = !is.null(.provider)
+    "You need to specify a .provider function in embed()" = !is.null(.provider),
+    "Input .media_columns must be TRUE or FALSE" = isTRUE(.media_columns) || isFALSE(.media_columns)
   ) |> validate_inputs()
+  items <- embed_items(.input)
   
   #Accept an unevaluated function
   if(rlang::is_function(.provider)){
@@ -306,11 +342,23 @@ embed <- function(.input,
     .truncate = .truncate,
     .max_tries = .max_tries,
     .timeout = .timeout,
-    .dry_run = .dry_run
+    .dry_run = .dry_run,
+    .task = .task,
+    .dimensions = .dimensions
   )
   common_args <- common_args[!sapply(common_args, is.null)]
 
-  return(dispatch_to_provider(provider_expr, "embed", common_args))
+  provider_meta <- rlang::call_modify(provider_expr, .called_from = "metadata") |> rlang::eval_tidy()
+  check_embed_media(items, provider_meta)
+  if (embed_is_text_only(items) && !S7_inherits(.input, LLMMessage)) {
+    common_args$.input <- embed_labels(items)
+  }
+
+  result <- dispatch_to_provider(provider_expr, "embed", common_args)
+  if (.media_columns && is.data.frame(result)) {
+    result <- embed_media_columns(result, items)
+  }
+  return(result)
 }
 
 
@@ -538,10 +586,10 @@ fetch_batch <- function(.llms,
 #' Run Deep Research via a Provider
 #'
 #' The `deep_research()` function sends a message to a provider's deep research endpoint.
-#' Currently supported: Perplexity (`sonar-deep-research` via async API).
+#' Currently supported: OpenAI (deep research models via the background API).
 #'
 #' @param .llm An `LLMMessage` object containing the research question.
-#' @param .provider A function or function call specifying the provider (e.g., `perplexity()`).
+#' @param .provider A function or function call specifying the provider (e.g., `openai()`).
 #' @param .background Logical; if TRUE, returns a `tidyllm_research_job` immediately (default: FALSE).
 #' @param ... Additional arguments passed to the provider's deep research function.
 #'
@@ -567,6 +615,22 @@ deep_research <- function(.llm, .provider, .background = FALSE, ...) {
   return(dispatch_to_provider(provider_expr, "deep_research", common_args))
 }
 
+
+#' Stop on a research job that does not name a supported provider
+#'
+#' @param .job A `tidyllm_research_job`.
+#' @param .caller Name of the calling verb, for the message.
+#' @return `NULL`, invisibly; called for the error.
+#' @noRd
+stop_unless_openai_job <- function(.job, .caller) {
+  if (!identical(.job$provider, "openai")) {
+    stop(.caller, " needs a research job that records its provider (\"openai\"). ",
+         "Jobs from the removed perplexity() provider are no longer supported; ",
+         "start the research again with deep_research(.provider = openai()).",
+         call. = FALSE)
+  }
+  invisible(NULL)
+}
 
 #' Check the Status of a Job
 #'
@@ -598,11 +662,8 @@ check_job.default <- function(.job, ...) {
 
 #' @export
 check_job.tidyllm_research_job <- function(.job, ...) {
-  if (identical(.job$provider %||% "perplexity", "openai")) {
-    openai_check_research(.job, ...)
-  } else {
-    perplexity_check_research(.job, ...)
-  }
+  stop_unless_openai_job(.job, "check_job()")
+  openai_check_research(.job, ...)
 }
 
 
@@ -632,11 +693,8 @@ fetch_job.default <- function(.job, .provider = NULL, ...) {
 
 #' @export
 fetch_job.tidyllm_research_job <- function(.job, .provider = NULL, ...) {
-  if (identical(.job$provider %||% "perplexity", "openai")) {
-    openai_fetch_research(.job, ...)
-  } else {
-    perplexity_fetch_research(.job, ...)
-  }
+  stop_unless_openai_job(.job, "fetch_job()")
+  openai_fetch_research(.job, ...)
 }
 
 
@@ -829,3 +887,201 @@ validate_message_attachments <- function(.llm, provider) {
 
 
 
+
+
+#' Answer questions about a text, an image or a recording with a decision model
+#'
+#' `decide()` sends a state (a text, a picture, a recording, a PDF or a mix) and a
+#' set of closed questions to a decision model and returns, for each question, the
+#' answer and the probability the model gives it. Use it to classify, screen or
+#' score texts and images where you want a calibrated number rather than free
+#' text. Give it many states at once and it runs the requests in parallel.
+#'
+#' Questions are the fields of a [tidyllm_schema()]. `field_lgl()` is a yes/no
+#' question, `field_fct(.levels = )` is a choice question, and
+#' `field_fct(.levels = , .ordered = TRUE)` is a score question over ordered
+#' levels. The field description is the question text. `.level_descriptions` in
+#' `field_fct()` tells the model what each option or level means; for a score
+#' question the level order is the scale. `field_lgl(.true = , .false = )` defines
+#' what yes and no mean; give both or neither.
+#'
+#' @section Media:
+#' A state can hold images, audio, video and PDFs next to text. A media object
+#' ([img()], [audio_file()], [video_file()], [pdf_file()]) is an item, and so is
+#' an `LLMMessage` (the text of its last user message, then its media). To put
+#' several parts into one item, wrap them in a list inside `.state`:
+#' `list(list(photo_a = img("a.jpg"), photo_b = img("b.jpg")))`. Names inside the
+#' item label the parts, so a question can say "the animal in photo_a". The
+#' providers read:
+#'
+#' \tabular{lll}{
+#'   Provider \tab Reads \tab Image option\cr
+#'   `jev()` \tab image \tab none\cr
+#'   `openai()` \tab image \tab `.detail`\cr
+#'   `gemini()` \tab image, audio, video, PDF \tab `.resolution`\cr
+#'   `ollama()` \tab image (not yet tested against a live server) \tab none
+#' }
+#'
+#' `provider_capabilities(.what = "decide_media")` gives the same table as a
+#' tibble. A provider that cannot read a media type stops with a message before
+#' any request; `decide()` also checks image size, format and count against the
+#' provider's limits and never resizes an image. A PDF sent to a provider that
+#' does not read PDFs is replaced by its extracted text; a PDF made with
+#' `pdf_file(.text_extract = TRUE)` always goes as text. Either way `decide()`
+#' tells you once per call, naming the provider and the files, that layout,
+#' tables and figures are lost. A PDF without extractable text stops the call.
+#'
+#' Images, audio and video leave your machine and go to the provider. Do not send
+#' restricted or personal data, such as survey photos with faces.
+#'
+#' @section Many states:
+#' Every element of `.state` is one item. An item is a string, a media object, an
+#' `LLMMessage`, or a list of parts that belong together (strings and media
+#' objects, one level only; names label the parts). `.state` itself is one item
+#' passed bare, a character vector (one item per string), or a list of items (one
+#' item per element). So `list(img("a.jpg"), img("b.jpg"))` is two items, and
+#' `list(list("Caption", img("c.jpg")))` is one item with two parts.
+#'
+#' A single item, however it is given, returns the plain tibble. Two or more items
+#' give one result tibble with a leading `state` column (the item's name when the
+#' outer list is named, else its text cut to 60 characters or a short description
+#' of its media) and an integer `state_id`, then the usual columns.
+#'
+#' The requests run in parallel, at most `.max_active` at a time, and are retried
+#' like a single request. A state that fails after its retries, or that the model
+#' refuses, gives NA rows and one warning; the other states are kept. A malformed
+#' item stops the call before any request and names its position.
+#'
+#' @section Finding things in images (experimental):
+#' `field_box()` asks where something is in an image and returns one box. Only
+#' `jev()` answers it; `openai()`, `gemini()` and `ollama()` stop with a message
+#' before any request, and so does a state without an image. A box question always
+#' returns a box, so pair it with a yes/no presence question. The vendor labels
+#' this as preview and the format may change. See [field_box()] and
+#' [box_to_pixels()].
+#'
+#' @param .state What to decide about. Every element is one item: a non-empty
+#'   string, a media object, an `LLMMessage`, or a list of parts that belong
+#'   together (one level only). Pass one item bare, a character vector, or a list
+#'   of items; two or more items are decided in parallel. See the Many states
+#'   section.
+#' @param .questions A [tidyllm_schema()] whose fields are the questions.
+#' @param .provider A provider call such as `jev()`.
+#' @param .dry_run If `TRUE`, return the httr2 request without sending it (a list
+#'   of requests, one per state, for many states).
+#' @param .timeout Timeout in seconds. Provider default if `NULL`.
+#' @param .max_tries Maximum attempts. Provider default if `NULL`.
+#' @param .max_active Most requests in flight at once when `.state` holds many
+#'   states. The default is 5; a free Gemini key allows about 200 requests a
+#'   minute, so lower it if you see rate-limit warnings.
+#' @param .progress Show a progress bar when `.state` holds many states.
+#'
+#' @return A tibble with one row per question and the columns `question`, `type`
+#'   (`"yes_no"`, `"choice"`, `"score"` or `"box"`), `answer` (`"yes"` or `"no"`, the chosen
+#'   option, or the score level with the highest probability), `probability` (of
+#'   that answer), `confidence` (the backend's
+#'   confidence in the answer; for yes/no questions the larger of the probability
+#'   of yes and of no when the backend gives none, and `NA` for choice and score
+#'   questions) and `probabilities` (a list
+#'   column with one named numeric vector over the options for each row). A box
+#'   question gives one row with `answer` and `probability` `NA`, and the schema
+#'   then also adds the numeric columns `top`, `bottom`, `left` and `right`
+#'   (fractions of the image; `NA` on all other rows). For many
+#'   states, one block of rows per state with `state` and `state_id` in front.
+#'
+#'   The attributes `usage`, `latency` and `model` describe the call. `usage` is a
+#'   list with `input_tokens` and `output_tokens` (what the provider billed; `NA`
+#'   when it does not report them), plus `cached_tokens` and `cache_write_tokens` for OpenAI and
+#'   `tokens_by_modality` for Gemini. `latency` is the elapsed seconds. For many
+#'   states, `usage` sums the states that succeeded, `latency` is the time of the
+#'   whole parallel run, and `model` is the model the first reply names. With
+#'   `.dry_run = TRUE`, the request.
+#'
+#' @examples
+#' \dontrun{
+#' questions <- tidyllm_schema(
+#'   late = field_lgl("Was the payment late?"),
+#'   tone = field_fct("Tone of the message", .levels = c("polite", "angry")),
+#'   severity = field_fct("How severe is the complaint?",
+#'     .levels = c("low", "medium", "high"), .ordered = TRUE)
+#' )
+#' decide("The invoice arrived three weeks late and nobody answers my mails.",
+#'        questions, jev())
+#'
+#' # Many texts: one tibble with a state and state_id column
+#' mails <- c("Payment is three weeks late.", "Thanks, all fine.")
+#' decide(mails, questions, openai())
+#'
+#' # An image, and two labelled images in one item
+#' cat_q <- tidyllm_schema(cat = field_lgl("Is the animal in the picture a cat?"))
+#' decide(img("cat.jpg"), cat_q, openai(.detail = "low"))
+#' pets <- tidyllm_schema(
+#'   a_dog = field_lgl("Is the animal in photo_a a dog?"),
+#'   b_dog = field_lgl("Is the animal in photo_b a dog?")
+#' )
+#' decide(list(list(photo_a = img("cat.jpg"), photo_b = img("dog.jpg"))), pets, jev())
+#'
+#' # Many images: one item per element
+#' files <- c("cat.jpg", "dog.jpg")
+#' decide(purrr::map(files, img), cat_q, gemini(.resolution = "low"))
+#' }
+#' @export
+decide <- function(.state,
+                   .questions,
+                   .provider = getOption("tidyllm_decide_default"),
+                   .dry_run = NULL,
+                   .timeout = NULL,
+                   .max_tries = NULL,
+                   .max_active = 5,
+                   .progress = FALSE) {
+  c("You need to specify a .provider function in decide()" = !is.null(.provider),
+    ".max_active must be a whole number of at least 1" =
+      is.numeric(.max_active) && length(.max_active) == 1 && !is.na(.max_active) &&
+        .max_active >= 1 && .max_active == round(.max_active),
+    ".progress must be TRUE or FALSE" = isTRUE(.progress) || isFALSE(.progress)) |>
+    validate_inputs()
+  states <- decide_states(.state)
+  questions <- decide_questions(.questions)
+
+  if (rlang::is_function(.provider)) {
+    .provider <- .provider()
+  }
+  if (!rlang::is_call(.provider)) {
+    provider_expr <- rlang::quo_get_expr(rlang::enquo(.provider))
+  } else {
+    provider_expr <- .provider
+  }
+  meta <- provider_metadata(provider_expr)
+  if (is.null(meta$supported_args$decide)) {
+    msg <- unsupported_verb_message(meta$provider_name, "decide")
+    cli::cli_abort("{msg}", call = NULL)
+  }
+  parsed_states <- states
+  states <- purrr::imap(states, \(s, i) at_state(i, length(states), \() decide_checked(s, questions, meta)))
+  inform_pdf_text_fallback(parsed_states, meta)
+
+  common_args <- list(
+    .state = if (length(states) == 1) states[[1]] else decide_many(states, .max_active, .progress),
+    .questions = questions,
+    .dry_run = .dry_run,
+    .timeout = .timeout,
+    .max_tries = .max_tries
+  )
+  common_args <- common_args[!purrr::map_lgl(common_args, is.null)]
+  dispatch_to_provider(provider_expr, "decide", common_args)
+}
+
+#' Removed: perplexity()
+#'
+#' `perplexity()` was removed in tidyllm 0.8.0 and always stops with a message.
+#'
+#' @param ... Ignored, so that old calls reach the message.
+#' @return Never returns.
+#' @keywords internal
+#' @export
+perplexity <- function(...) {
+  cli::cli_abort(c(
+    "{.fn perplexity} was removed in tidyllm 0.8.0.",
+    i = "Use {.fn openai}, {.fn claude}, {.fn gemini} or {.fn openrouter} instead; {.fn deep_research} works with {.fn openai}."
+  ), call = NULL)
+}

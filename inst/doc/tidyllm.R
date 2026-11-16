@@ -239,6 +239,10 @@ llm_message("What time is it in Stuttgart right now?") |>
               .role = "assistant")
 
 ## ----eval=FALSE---------------------------------------------------------------
+# llm_message("What is the latest R release, and when did it come out?") |>
+#   chat(claude(), .tools = websearch_tool())
+
+## ----eval=FALSE---------------------------------------------------------------
 # library(ellmer)
 # btw_tool <- ellmer_tool(btw::btw_tool_files_list_files)
 # llm_message("List files in the R/ folder.") |>
@@ -291,7 +295,7 @@ tibble::tribble(
 # conversations <- readRDS("claude_batch.rds") |>
 #   fetch_batch(claude())
 # 
-# poems <- purrr::map_chr(conversations, get_reply)
+# poems <- get_reply(conversations)
 
 ## ----eval=FALSE---------------------------------------------------------------
 # # Blocking: waits for completion, returns an LLMMessage

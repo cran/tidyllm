@@ -3,7 +3,12 @@ tidyllm_field <- new_class("tidyllm_field", properties = list(
   description = class_character,
   enum = class_character,   # For factor (enum) fields only.
   vector = class_logical,
-  schema = class_list       # New: holds a nested schema (if any)
+  schema = class_list,
+  ordered = class_logical,
+  level_descriptions = class_character,
+  true_description = class_character,
+  false_description = class_character,
+  box = class_logical
 ))
 
 #' Define Field Descriptors for JSON Schema
@@ -13,6 +18,14 @@ tidyllm_field <- new_class("tidyllm_field", properties = list(
 #' @param .description A character string describing the field (optional).
 #' @param .vector A logical value indicating if the field is a vector (default: FALSE).
 #' @param .levels A character vector specifying allowable values (for `field_fct()` only).
+#' @param .ordered For `field_fct()`: `TRUE` marks the levels as ordered, which
+#'   `decide()` reads as a score question. Structured-output chat ignores it.
+#' @param .level_descriptions For `field_fct()`: `NULL` (default) or a character
+#'   vector with one description per level, in the order of `.levels`. Only
+#'   `decide()` sends it; structured-output chat ignores it.
+#' @param .true,.false For `field_lgl()`: `NULL` (default) or a string saying what
+#'   a yes and a no mean. Give both or neither. Only `decide()` sends them;
+#'   structured-output chat ignores them.
 #'
 #' @return An S7 `tidyllm_field` object representing the field descriptor.
 #'
@@ -35,13 +48,21 @@ field_chr <- function(.description = character(0), .vector = FALSE) {
 
 #' @rdname field_chr
 #' @export
-field_fct <- function(.description = character(0), .levels, .vector = FALSE) {
+field_fct <- function(.description = character(0), .levels, .vector = FALSE,
+                      .ordered = FALSE, .level_descriptions = NULL) {
+  c(".ordered must be TRUE or FALSE" = is.logical(.ordered) && length(.ordered) == 1 && !is.na(.ordered),
+    ".level_descriptions must be NULL or a character vector with one entry per level" =
+      is.null(.level_descriptions) ||
+      (is.character(.level_descriptions) && length(.level_descriptions) == length(.levels))) |>
+    validate_inputs()
   tidyllm_field(
     type = "string",
     description = .description,
     enum = .levels,
     vector = .vector,
-    schema = list()
+    schema = list(),
+    ordered = .ordered,
+    level_descriptions = .level_descriptions %||% character(0)
   )
 }
 
@@ -59,13 +80,74 @@ field_dbl <- function(.description = character(0), .vector = FALSE) {
 
 #' @rdname field_chr
 #' @export
-field_lgl <- function(.description = character(0), .vector = FALSE) {
+field_lgl <- function(.description = character(0), .vector = FALSE,
+                      .true = NULL, .false = NULL) {
+  is_text <- \(x) is.null(x) || (is.character(x) && length(x) == 1 && !is.na(x) && nzchar(x))
+  c(".true and .false must each be NULL or one non-empty string" = is_text(.true) && is_text(.false),
+    "Give both .true and .false, or neither" = is.null(.true) == is.null(.false)) |>
+    validate_inputs()
   tidyllm_field(
     type = "boolean",
     description = .description,
     enum = character(0),
     vector = .vector,
-    schema = list()
+    schema = list(),
+    true_description = .true %||% character(0),
+    false_description = .false %||% character(0)
+  )
+}
+
+#' Ask `decide()` to find something in an image (experimental)
+#'
+#' `field_box()` is a `decide()` question that asks where something is in a
+#' picture. The answer is one box around it, given as four fractions of the
+#' image: `top`, `bottom`, `left` and `right`, each measured from the top-left
+#' corner (0 is the edge you measure from, 1 the far side). Multiply by the pixel
+#' height and width to crop or draw; [box_to_pixels()] does it for you.
+#'
+#' This feature is experimental. Only [jev()] answers it, the vendor labels
+#' image input and boxes as preview, and the format may change between Jev
+#' releases. `openai()`, `gemini()` and `ollama()` stop with a message before any
+#' request. A state without an image stops too.
+#'
+#' A box question always returns a box, even when the thing is not in the
+#' picture. Pair it with a yes/no question that asks whether it is there, and
+#' ignore the box when the answer is no. To point at one of several images, name
+#' the image in the description: give the images names in `.state` and write
+#' "the dog in `photo_b`". Ask for one thing per box question; for several
+#' things, add several questions.
+#'
+#' In the result, a box question is one row with type `"box"`, `answer` and
+#' `probability` set to `NA`, and `confidence` as the model gives it (it can be
+#' `NA`). The columns `top`, `bottom`, `left` and `right` appear only when the
+#' schema holds a box question and are `NA` on all other rows. Boxes are rough
+#' for small objects in large images and their accuracy is unmeasured; check a
+#' sample by eye before you rely on them.
+#'
+#' @param .description What to find, as a short sentence, for example "The
+#'   protest banner in `photo`".
+#' @return An S7 `tidyllm_field` object for use in [tidyllm_schema()].
+#' @examples
+#' \dontrun{
+#' questions <- tidyllm_schema(
+#'   has_cat = field_lgl("Is there a cat in `photo`?"),
+#'   cat = field_box("The cat in `photo`")
+#' )
+#' decide(list(list(photo = img("cat.jpg"))), questions, jev())
+#' }
+#' @seealso [box_to_pixels()], [decide()]
+#' @export
+field_box <- function(.description) {
+  c(".description must be one non-empty string" =
+      is.character(.description) && length(.description) == 1 && !is.na(.description) && nzchar(.description)) |>
+    validate_inputs()
+  tidyllm_field(
+    type = "string",
+    description = .description,
+    enum = character(0),
+    vector = FALSE,
+    schema = list(),
+    box = TRUE
   )
 }
 
@@ -204,7 +286,26 @@ build_schema <- function(fields, name = NULL) {
   if (!is.null(name)) {
     attr(schema, "name") <- name
   }
+  decide_meta <- schema_decide_meta(fields)
+  if (length(decide_meta) > 0) {
+    attr(schema, "decide_meta") <- decide_meta
+  }
   schema
+}
+
+#' Question hints that only `decide()` reads, kept off the JSON itself
+#'
+#' Returns a named list with one entry per field that is ordered, a box, or carries level
+#' or yes/no descriptions, and an empty list otherwise, so ordinary schemas gain no attribute.
+#' @noRd
+schema_decide_meta <- function(fields) {
+  hints <- purrr::map(fields, \(f) {
+    if (!S7_inherits(f, tidyllm_field)) return(NULL)
+    if (!isTRUE(f@ordered) && !isTRUE(f@box) && length(f@level_descriptions) == 0 && length(f@true_description) == 0) return(NULL)
+    list(ordered = isTRUE(f@ordered), level_descriptions = f@level_descriptions,
+         true = f@true_description, false = f@false_description, box = isTRUE(f@box))
+  })
+  purrr::compact(hints)
 }
 
 #' Create a JSON Schema for Structured Outputs

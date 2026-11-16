@@ -47,15 +47,15 @@ Sys.setenv(OPENAI_API_KEY = "your-key-here")
 | **Google Gemini** | `GOOGLE_API_KEY` | [Google AI Studio](https://aistudio.google.com/app/apikey) |
 | **Mistral** | `MISTRAL_API_KEY` | [Mistral Console](https://console.mistral.ai/api-keys/) |
 | **Groq** | `GROQ_API_KEY` | [Groq Console](https://console.groq.com/playground) |
-| **Perplexity** (deprecated) | `PERPLEXITY_API_KEY` | [Perplexity API docs](https://docs.perplexity.ai/docs/getting-started/overview) |
 | **DeepSeek** | `DEEPSEEK_API_KEY` | [DeepSeek Platform](https://platform.deepseek.com/api_keys) |
 | **Voyage AI** | `VOYAGE_API_KEY` | [Voyage AI API key guide](https://docs.voyageai.com/docs/api-key-and-installation) |
 | **OpenRouter** | `OPENROUTER_API_KEY` | [OpenRouter Dashboard](https://openrouter.ai/keys) |
+| **TypeSafe AI** (`jev()`, for `decide()`) | `TYPESAFE_API_KEY` | [TypeSafe AI](https://typesafe.ai) |
 | **Azure OpenAI** | `AZURE_OPENAI_API_KEY` | [Azure Portal](https://portal.azure.com/) |
-| **Tavily** (web search for `websearch()` and `websearch_tool()`) | `TAVILY_API_KEY` | [Tavily](https://app.tavily.com) |
-| **SearXNG** (self-hosted web search for `websearch()` and `websearch_tool()`) | `SEARXNG_SERVER` (the server address, not a key) | [SearXNG](https://docs.searxng.org) |
 
 Three providers run a command line tool installed on your machine instead of calling an API from R. `claude_cli()` uses the login of the `claude` tool and needs no key. `codex_cli()` uses Codex's own login, or `OPENAI_API_KEY` with `.use_api_key = TRUE`. `vibe_cli()` uses `MISTRAL_API_KEY`, or the key Vibe saved during its own setup.
+
+Hosted providers receive every text, image and file you send them. For restricted or personal data, use a local model through `ollama()` or `llamacpp()` (next section); the command line providers still pass your text on to their vendor.
 
 ### Running Local Models
 
@@ -104,8 +104,8 @@ c("A famous landmark in Paris is the Eiffel Tower.")
 
 All API interactions follow the **verb + provider** pattern:
 
-- **Verbs** define the action: `chat()`, `embed()`, `send_batch()`, `check_batch()`, `fetch_batch()`, `list_batches()`, `list_models()`, `deep_research()`, `check_job()`, `fetch_job()`, `upload_file()`, `list_files()`, `file_info()`, `delete_file()`
-- **Providers** specify the API: `openai()`, `claude()`, `claude_cli()`, `codex_cli()`, `vibe_cli()`, `gemini()`, `ollama()`, `mistral()`, `groq()`, `deepseek()`, `voyage()`, `openrouter()`, `llamacpp()`, `azure_openai()`, `ellmer()`
+- **Verbs** define the action: `chat()`, `embed()`, `send_batch()`, `check_batch()`, `fetch_batch()`, `list_batches()`, `list_models()`, `deep_research()`, `decide()`, `check_job()`, `fetch_job()`, `upload_file()`, `list_files()`, `file_info()`, `delete_file()`
+- **Providers** specify the API: `openai()`, `claude()`, `claude_cli()`, `codex_cli()`, `vibe_cli()`, `gemini()`, `ollama()`, `mistral()`, `groq()`, `deepseek()`, `voyage()`, `openrouter()`, `jev()`, `llamacpp()`, `azure_openai()`, `ellmer()`
 
 Provider-specific functions like `openai_chat()` or `claude_chat()` also work directly and expose the full range of parameters for each API.
 
@@ -267,7 +267,7 @@ tibble::tibble(
 ) |> print(width = 60)
 ```
 
-The `api_specific` list column holds provider-only metadata such as citations (Perplexity), thinking traces (Claude, Gemini, DeepSeek), or grounding information (Gemini).
+The `api_specific` list column holds provider-only metadata such as thinking traces (Claude, Gemini, DeepSeek), or grounding information (Gemini).
 
 ### Listing Available Models
 
@@ -393,7 +393,18 @@ llm_message("What time is it in Stuttgart right now?") |>
 
 When a tool is provided, the model can request its execution, tidyllm runs it in your R session, and the result is fed back automatically. Multi-turn tool loops (where the model makes several tool calls) are handled transparently.
 
-For provider-independent web search with `websearch_tool()` and tools served over MCP, see the [tools article](https://edubruell.github.io/tidyllm/articles/tidyllm_tools.html).
+### Web Search
+
+Models do not know about events after their training date. Some providers run a search for you: `claude_websearch()` and `openai_websearch()` are built-in tools that the provider's own server executes. tidyllm also ships a search tool that works with any provider that supports tools, `websearch_tool()`, and a plain `websearch()` function that returns results to R.
+
+```{r, eval=FALSE}
+llm_message("What is the latest R release, and when did it come out?") |>
+  chat(claude(), .tools = websearch_tool())
+```
+
+The provider-independent search needs its own setup. `websearch_tool()` and `websearch()` use [Tavily](https://app.tavily.com) by default, which reads your key from `TAVILY_API_KEY`. A self-hosted [SearXNG](https://docs.searxng.org) server is the alternative (`.backend = "searxng"`); its address goes in `SEARXNG_SERVER` and is not a key.
+
+For more on web search and on tools served over MCP, see the [tools article](https://edubruell.github.io/tidyllm/articles/tidyllm_tools.html).
 
 If you use **ellmer**, convert existing ellmer tool definitions with `ellmer_tool()`:
 
@@ -470,8 +481,10 @@ tibble::tribble(
 conversations <- readRDS("claude_batch.rds") |>
   fetch_batch(claude())
 
-poems <- purrr::map_chr(conversations, get_reply)
+poems <- get_reply(conversations)
 ```
+
+`get_reply()`, `get_reply_data()` and `get_metadata()` read the whole list at once. With a schema, `get_reply_data(conversations)` returns a tibble with one row per reply; a request that failed keeps its row, with the message in the `error` column.
 
 `check_job()` and `fetch_job()` are type-dispatching aliases; they work on both batch objects and background research jobs (see `deep_research()` below).
 
@@ -518,7 +531,6 @@ To stream into a user interface rather than the console, use `send_chat()`, whic
 | `gemini()` | 1M-token context window; native image, audio, and video via `.media`; search grounding; `.thinking_level` for reasoning; Files API; batch |
 | `mistral()` | EU-hosted, GDPR-friendly; Magistral and Mistral Large 4 reasoning models (`.reasoning_effort = "none"` turns reasoning off on Large 4); Voxtral audio models (`.media = audio_file()`); embeddings; batch |
 | `groq()` | Fastest available inference (300-1200 tokens/s); `groq_transcribe()` for Whisper audio; `.json_schema`; batch |
-| `perplexity()` (deprecated since 0.7.0, removed in 0.8.0; use `openrouter(.model = "perplexity/sonar")`) | Real-time web search with citations in metadata; `deep_research()` for long-horizon research; search domain filter |
 | `deepseek()` | Top math and reasoning benchmarks at very low cost; `.thinking = TRUE` turns on thinking mode and returns the reasoning trace in metadata |
 | `voyage()` | State-of-the-art retrieval embeddings; `voyage_rerank()`; multimodal embeddings (text + images); `.output_dimension` |
 | `openrouter()` | 500+ models via one API key; audio and video support on Gemini, Qwen 3.6, and other multimodal routes; automatic fallback routing |
@@ -527,6 +539,7 @@ To stream into a user interface rather than the console, use `send_chat()`, whic
 | `vibe_cli()` | Runs your own installed Mistral `vibe` command line tool with `MISTRAL_API_KEY`; any Mistral model via `.model`; no token counts; its tools are off unless `.cli_tools = TRUE` |
 | `ellmer()` | Use any ellmer chat object as a tidyllm provider |
 | `ollama()` | Local models with full data privacy; no API costs; `ollama_download_model()` for model management |
+| `jev()` | Decision models from TypeSafe AI for `decide()` only: yes/no, choice and score questions with probabilities; reads images |
 | `llamacpp()` | Often the most performant local inference stack; audio input with Ultravox, Qwen2.5-Omni, Qwen3-Omni, and Gemma 4 models; BNF grammar constraints; logprobs; `llamacpp_rerank()` |
 | `azure_openai()` | Enterprise Azure deployments of OpenAI models; batch support |
 
@@ -568,3 +581,15 @@ llm_message("Hello!") |> chat()
 
 c("text one", "text two") |> embed()
 ```
+
+## Where to Go Next
+
+Pick the article that matches your task:
+
+- [Working with Files and Media](https://edubruell.github.io/tidyllm/articles/tidyllm_video.html): Ask a model about an image, a recording, a video or a PDF page.
+- [Classifying Texts with tidyllm](https://edubruell.github.io/tidyllm/articles/tidyllm_classifiers.html): Label thousands of free-text answers with a codebook, and check the labels against a sample coded by people.
+- [Decision Models with tidyllm](https://edubruell.github.io/tidyllm/articles/tidyllm_decide.html): Not a chat model: a cheap model that answers fixed yes/no, choice or score questions about a text or image and returns a probability for each answer. Use it to code many texts quickly.
+- [Embedding Models in tidyllm](https://edubruell.github.io/tidyllm/articles/tidyllm_embed.html): Models that translate texts into numbers, which you can use to find similar texts, group them or search them.
+- [Structured Question Answering from PDFs](https://edubruell.github.io/tidyllm/articles/tidyllm-pdfquestions.html): Ask the same questions of a folder of papers and get a table with one row per paper.
+
+The [articles overview](https://edubruell.github.io/tidyllm/articles/index.html) lists more under "Go deeper": local models, command line providers, tools and Shiny apps.

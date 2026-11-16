@@ -70,7 +70,7 @@ method(extract_metadata, list(api_llamacpp, class_list)) <- function(.api, .resp
 #' @param .thinking_budget Integer; maximum tokens the model may use for thinking when
 #'   `.thinking = TRUE`. `NULL` uses the server default (optional).
 #' @param .server Base URL of the llama.cpp server. Defaults to the `LLAMACPP_SERVER`
-#'   environment variable, falling back to `"http://localhost:8080"`.
+#'   environment variable, falling back to `"http://localhost:9931"`.
 #' @param .api_key API key for the llama.cpp server. Defaults to the `LLAMACPP_API_KEY`
 #'   environment variable. Leave unset if the server was started without `--api-key`.
 #' @param .timeout Request timeout in seconds (default: 120).
@@ -99,7 +99,7 @@ llamacpp_chat <- function(.llm,
                           .seed            = NULL,
                           .thinking        = NULL,
                           .thinking_budget = NULL,
-                          .server          = Sys.getenv("LLAMACPP_SERVER", "http://localhost:8080"),
+                          .server          = Sys.getenv("LLAMACPP_SERVER", "http://localhost:9931"),
                           .api_key        = Sys.getenv("LLAMACPP_API_KEY", ""),
                           .timeout        = 120,
                           .verbose        = FALSE,
@@ -129,7 +129,7 @@ llamacpp_build_chat_request <- function(.llm,
                           .seed            = NULL,
                           .thinking        = NULL,
                           .thinking_budget = NULL,
-                          .server          = Sys.getenv("LLAMACPP_SERVER", "http://localhost:8080"),
+                          .server          = Sys.getenv("LLAMACPP_SERVER", "http://localhost:9931"),
                           .api_key        = Sys.getenv("LLAMACPP_API_KEY", ""),
                           .timeout        = 120,
                           .verbose        = FALSE,
@@ -234,38 +234,49 @@ llamacpp_build_chat_request <- function(.llm,
 #' Generate Embeddings Using a llama.cpp Server
 #'
 #' @description
-#' Sends text to the `/v1/embeddings` endpoint of a running llama.cpp server
-#' and returns embedding vectors.
+#' Sends text, images, audio or video to the `/v1/embeddings` endpoint of a running
+#' llama.cpp server and returns embedding vectors. Media need a multimodal embedding
+#' model, such as EmbeddingGemma 2, started with its `--mmproj` file (for example
+#' `llama-server -m embeddinggemma-2-Q8_0.gguf --mmproj mmproj-embeddinggemma-2-Q8_0.gguf
+#' --embeddings -c 16384 -b 16384 -ub 16384`). A video of about 9 seconds needs a context
+#' and batch size near 16384. The server marks audio input as experimental.
 #'
-#' @param .input A character vector of texts to embed, or an `LLMMessage` object.
+#' @param .input A character vector of texts to embed, a list mixing texts with `img()`,
+#'   `audio_file()` and `video_file()` objects (a nested list is one fused item), or an
+#'   `LLMMessage` object.
 #' @param .model The model name (default: `"local-model"`). llama.cpp ignores this
 #'   and serves the loaded embedding model.
 #' @param .server Base URL of the llama.cpp server. Defaults to the `LLAMACPP_SERVER`
-#'   environment variable, falling back to `"http://localhost:8080"`.
+#'   environment variable, falling back to `"http://localhost:9931"`.
 #' @param .api_key API key for the server (default: `LLAMACPP_API_KEY` env var).
 #' @param .timeout Request timeout in seconds (default: 120).
 #' @param .dry_run If TRUE, returns the request object without executing it (default: FALSE).
 #' @param .max_tries Maximum retries (default: 3).
+#' @param .task `NULL` (default), `"query"` or `"document"`. Adds the EmbeddingGemma 2 task
+#'   prefix to text; media get none.
 #'
-#' @return A tibble with columns `input` (text) and `embeddings` (list of numeric vectors).
+#' @return A tibble with columns `input` (text, or a label such as `[IMG] cat.jpg`) and
+#'   `embeddings` (list of numeric vectors).
 #'
 #' @export
 llamacpp_embedding <- function(.input,
                                .model   = "local-model",
-                               .server  = Sys.getenv("LLAMACPP_SERVER", "http://localhost:8080"),
+                               .server  = Sys.getenv("LLAMACPP_SERVER", "http://localhost:9931"),
                                .api_key = Sys.getenv("LLAMACPP_API_KEY", ""),
                                .timeout = 120,
                                .dry_run = FALSE,
-                               .max_tries = 3) {
+                               .max_tries = 3,
+                               .task = NULL) {
   c(
-    "Input .input must be an LLMMessage object or a character vector" = S7_inherits(.input, LLMMessage) || is.character(.input),
     "Input .model must be a non-empty string" = is.character(.model) && nzchar(.model),
     "Input .server must be a non-empty string" = is.character(.server) && nzchar(.server),
     "Input .timeout must be a positive number" = is.numeric(.timeout) && .timeout > 0,
     "Input .dry_run must be logical" = is.logical(.dry_run)
   ) |> validate_inputs()
+  validate_embed_options(.task, NULL)
 
-  input_texts <- parse_embedding_input(.input)
+  items <- embed_items(.input)
+  input_labels <- embed_labels(items)
 
   auth_header <- if (nzchar(.api_key)) {
     list(Authorization = sprintf("Bearer %s", .api_key))
@@ -276,7 +287,10 @@ llamacpp_embedding <- function(.input,
   request <- httr2::request(.server) |>
     httr2::req_url_path("/v1/embeddings") |>
     httr2::req_headers(!!!auth_header, `Content-Type` = "application/json") |>
-    httr2::req_body_json(list(model = .model, input = input_texts))
+    httr2::req_body_json(list(
+      model = .model,
+      input = embed_content_input(items, llamacpp_embed_part, embed_task_prefix(.task))
+    ))
 
   if (.dry_run) {
     return(request)
@@ -295,8 +309,22 @@ llamacpp_embedding <- function(.input,
     .request               = request,
     .timeout               = .timeout,
     .max_tries             = .max_tries,
-    .input_texts           = input_texts,
+    .input_texts           = input_labels,
     .fn_extract_embeddings = extract_embeddings_fn
+  )
+}
+
+#' One embed part as a llama.cpp typed content part
+#' @param .part A string or a tidyllm image, audio or video object.
+#' @return A named list for the `content` array.
+#' @noRd
+llamacpp_embed_part <- function(.part) {
+  switch(embed_part_type(.part),
+    text  = list(type = "text", text = .part),
+    image = list(type = "image_url", image_url = list(url = .part@imagebase64)),
+    audio = list(type = "input_audio",
+                 input_audio = list(data = embed_part_base64(.part), format = embed_audio_format(.part))),
+    video = list(type = "input_video", input_video = list(url = embed_part_data_uri(.part)))
   )
 }
 
@@ -309,7 +337,7 @@ llamacpp_embedding <- function(.input,
 #' row; two rows appear when speculative decoding is active (main + draft model).
 #'
 #' @param .server Base URL of the llama.cpp server. Defaults to `LLAMACPP_SERVER`
-#'   env var, falling back to `"http://localhost:8080"`.
+#'   env var, falling back to `"http://localhost:9931"`.
 #' @param .api_key API key for the server (default: `LLAMACPP_API_KEY` env var).
 #' @param .timeout Request timeout in seconds (default: 30).
 #' @param .max_tries Maximum retries (default: 3).
@@ -317,7 +345,7 @@ llamacpp_embedding <- function(.input,
 #' @return A tibble with columns `id`, `object`, and `created`.
 #'
 #' @export
-llamacpp_list_models <- function(.server  = Sys.getenv("LLAMACPP_SERVER", "http://localhost:8080"),
+llamacpp_list_models <- function(.server  = Sys.getenv("LLAMACPP_SERVER", "http://localhost:9931"),
                                  .api_key = Sys.getenv("LLAMACPP_API_KEY", ""),
                                  .timeout = 30,
                                  .max_tries = 3) {
@@ -357,13 +385,13 @@ llamacpp_list_models <- function(.server  = Sys.getenv("LLAMACPP_SERVER", "http:
 #' or `"error"`) along with the full parsed response body as a named list.
 #'
 #' @param .server Base URL of the llama.cpp server. Defaults to `LLAMACPP_SERVER`
-#'   env var, falling back to `"http://localhost:8080"`.
+#'   env var, falling back to `"http://localhost:9931"`.
 #' @param .timeout Request timeout in seconds (default: 10).
 #'
 #' @return A named list with at least a `status` element.
 #'
 #' @export
-llamacpp_health <- function(.server  = Sys.getenv("LLAMACPP_SERVER", "http://localhost:8080"),
+llamacpp_health <- function(.server  = Sys.getenv("LLAMACPP_SERVER", "http://localhost:9931"),
                             .timeout = 10) {
   resp <- tryCatch(
     httr2::request(.server) |>
@@ -552,7 +580,7 @@ llamacpp_delete_model <- function(.path) {
 #' @param .documents A character vector of documents to rerank.
 #' @param .model The model name (default: `"local-model"`).
 #' @param .server Base URL of the llama.cpp server. Defaults to `LLAMACPP_SERVER`
-#'   env var, falling back to `"http://localhost:8080"`.
+#'   env var, falling back to `"http://localhost:9931"`.
 #' @param .api_key API key for the server (default: `LLAMACPP_API_KEY` env var).
 #' @param .timeout Request timeout in seconds (default: 60).
 #' @param .max_tries Maximum retries (default: 3).
@@ -565,7 +593,7 @@ llamacpp_delete_model <- function(.path) {
 llamacpp_rerank <- function(.query,
                             .documents,
                             .model   = "local-model",
-                            .server  = Sys.getenv("LLAMACPP_SERVER", "http://localhost:8080"),
+                            .server  = Sys.getenv("LLAMACPP_SERVER", "http://localhost:9931"),
                             .api_key = Sys.getenv("LLAMACPP_API_KEY", ""),
                             .timeout = 60,
                             .max_tries = 3,
@@ -647,5 +675,6 @@ llamacpp <- create_provider_function(
   build       = llamacpp_build_chat_request,
   embed       = llamacpp_embedding,
   list_models = llamacpp_list_models,
-  .media = c("image", "audio")
+  .media = c("image", "audio"),
+  .embed_media = c("image", "audio", "video")
 )

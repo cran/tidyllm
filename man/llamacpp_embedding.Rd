@@ -7,21 +7,24 @@
 llamacpp_embedding(
   .input,
   .model = "local-model",
-  .server = Sys.getenv("LLAMACPP_SERVER", "http://localhost:8080"),
+  .server = Sys.getenv("LLAMACPP_SERVER", "http://localhost:9931"),
   .api_key = Sys.getenv("LLAMACPP_API_KEY", ""),
   .timeout = 120,
   .dry_run = FALSE,
-  .max_tries = 3
+  .max_tries = 3,
+  .task = NULL
 )
 }
 \arguments{
-\item{.input}{A character vector of texts to embed, or an \code{LLMMessage} object.}
+\item{.input}{A character vector of texts to embed, a list mixing texts with \code{img()},
+\code{audio_file()} and \code{video_file()} objects (a nested list is one fused item), or an
+\code{LLMMessage} object.}
 
 \item{.model}{The model name (default: \code{"local-model"}). llama.cpp ignores this
 and serves the loaded embedding model.}
 
 \item{.server}{Base URL of the llama.cpp server. Defaults to the \code{LLAMACPP_SERVER}
-environment variable, falling back to \code{"http://localhost:8080"}.}
+environment variable, falling back to \code{"http://localhost:9931"}.}
 
 \item{.api_key}{API key for the server (default: \code{LLAMACPP_API_KEY} env var).}
 
@@ -30,11 +33,18 @@ environment variable, falling back to \code{"http://localhost:8080"}.}
 \item{.dry_run}{If TRUE, returns the request object without executing it (default: FALSE).}
 
 \item{.max_tries}{Maximum retries (default: 3).}
+
+\item{.task}{\code{NULL} (default), \code{"query"} or \code{"document"}. Adds the EmbeddingGemma 2 task
+prefix to text; media get none.}
 }
 \value{
-A tibble with columns \code{input} (text) and \code{embeddings} (list of numeric vectors).
+A tibble with columns \code{input} (text, or a label such as \verb{[IMG] cat.jpg}) and
+\code{embeddings} (list of numeric vectors).
 }
 \description{
-Sends text to the \verb{/v1/embeddings} endpoint of a running llama.cpp server
-and returns embedding vectors.
+Sends text, images, audio or video to the \verb{/v1/embeddings} endpoint of a running
+llama.cpp server and returns embedding vectors. Media need a multimodal embedding
+model, such as EmbeddingGemma 2, started with its \code{--mmproj} file (for example
+\verb{llama-server -m embeddinggemma-2-Q8_0.gguf --mmproj mmproj-embeddinggemma-2-Q8_0.gguf --embeddings -c 16384 -b 16384 -ub 16384}). A video of about 9 seconds needs a context
+and batch size near 16384. The server marks audio input as experimental.
 }

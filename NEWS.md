@@ -1,3 +1,81 @@
+# tidyllm 0.8.0
+
+This release adds `decide()`, a verb for decision models that answer fixed questions with a probability, and `jev()`, a provider for them. It also moves defaults to current provider APIs and removes Perplexity as a provider. It includes the changes of 0.7.2, which reached GitHub only.
+
+## `decide()`: closed questions with probabilities
+
+Decision models answer fixed yes/no, choice or score questions about a text and report how likely each answer is. Use them to classify, screen or score many texts quickly. The questions are the fields of a `tidyllm_schema()`: `field_lgl()` asks yes/no, `field_fct()` asks a choice, and `field_fct(.ordered = TRUE)` asks a score over ordered levels.
+
+```r
+questions <- tidyllm_schema(
+  late = field_lgl("Was the payment late?"),
+  tone = field_fct("Tone of the message", .levels = c("polite", "angry")),
+  severity = field_fct("How severe is the complaint?",
+    .levels = c("low", "medium", "high"), .ordered = TRUE)
+)
+
+decide("The invoice arrived three weeks late and nobody answers my mails.",
+       questions, jev())
+```
+
+The result is a tibble with one row per question: `question`, `type`, `answer`, `probability`, `confidence` and `probabilities`. The attributes `usage`, `latency` and `model` describe the call, and `.dry_run = TRUE` returns the request without sending it.
+
+* **Providers:** the new `jev()` covers TypeSafe AI's Jev models and any server with the same System One API (key in `TYPESAFE_API_KEY`, `.server` for another URL). `openai()`, `gemini()` and `ollama()` also work with `decide()`.
+* **Many texts:** pass a character vector or a list. Each element is one item and gets one request, sent in parallel (`.max_active`, default 5). The result gains a leading `state` label and an integer `state_id`. An item that fails gives `NA` rows and a warning; the other items keep their results.
+* **Images, audio and PDFs:** `.state` can hold `img()`, `audio_file()`, `video_file()` and `pdf_file()` objects, or a named list of parts that belong together. `provider_capabilities(.what = "decide_media")` shows what each provider reads. Limits are checked before anything is sent, and `decide()` never resizes an image. A PDF sent to a provider that cannot read PDFs goes as extracted text, with one notice.
+* **Question helpers:** `field_fct()` gains `.ordered` and `.level_descriptions`, and `field_lgl()` gains `.true` and `.false`. Only `decide()` uses them.
+
+## Find things in images with `field_box()` (experimental)
+
+`field_box("The cat in `photo`")` asks `decide()` for one box around a thing in a picture. The result gets a row of type `"box"` with `top`, `bottom`, `left` and `right` as fractions of the image, and `box_to_pixels()` converts them to pixels. A box question always returns a box, so pair it with a yes/no question. This works with `jev()` only, and the format may change.
+
+## Read many replies at once
+
+`get_reply()`, `get_reply_data()` and `get_metadata()` now accept the list that `parallel_chat()` and `fetch_batch()` return. `get_reply()` gives one string per reply; the other two give a tibble with one row per reply (`reply_id`, `error`, then the schema fields or metadata). A failed request keeps its row, with the message in `error`.
+
+```r
+replies <- parallel_chat(prompts, claude(.json_schema = schema))
+get_reply_data(replies)
+```
+
+## Updated for current provider APIs
+
+* `mistral()` defaults to `mistral-large-4`, which always reasons; `.reasoning_effort` takes `"low"`, `"medium"` or `"high"`. Pass `.model = "zai-glm-5-3"` for the previous default.
+* `openai()` accepts every reasoning effort the API names, from `"none"` to `"max"`; each model takes a subset. `.temperature` works only at effort `"none"`. `openai_websearch()` and `openai_deep_research()` use the `web_search` tool type.
+* `gemini()` accepts `.thinking_level = "xhigh"` (supported by `gemini-4-hydrogen`). `gemini-3.8-flash` and the Gemini 4 models reject `"minimal"`.
+* `llamacpp()` looks for the server on port 9931, the default of current `llama-server` builds. Set `LLAMACPP_SERVER` for an older address.
+* `azure_openai()` defaults to a deployment named `gpt-6-luna`; pass `.deployment` if yours differs. This path has no live test.
+* tidyllm requires httr2 1.2.3 or later. `decide()` now also retries HTTP 529 (overloaded), like 429 and 503.
+
+## Perplexity removed
+
+`perplexity()` and the `perplexity_*()` functions, deprecated since 0.7.0, are gone. Use Perplexity models through `openrouter(.model = "perplexity/sonar")` and web search through `websearch_tool()`. `deep_research()` supports `openai()` only, so start research jobs again with `deep_research(.provider = openai())`. `perplexity()` stays as a stub that stops with a pointer to the replacements.
+
+# tidyllm 0.7.2: GitHub-only release, never on CRAN
+
+Version 0.7.2 was released on GitHub only. Its changes reach CRAN with 0.8.0.
+
+## Embed images, audio and video
+
+Until now only `voyage()` could embed images. `embed()` now also embeds images, audio and video with `llamacpp()`, `gemini()` and `openrouter()`, and images and audio with `ollama()` (version 0.40.4 or later). Pass a list that mixes text with `img()`, `audio_file()` and `video_file()`:
+
+```r
+list("A cat", img("cat.jpg"), audio_file("cat.wav")) |>
+  embed(llamacpp())
+```
+
+Each element becomes one row. Put several items in a nested list to get one combined vector for them. `provider_capabilities(.what = "embed_media")` shows what each provider accepts, and `embed()` stops with a clear message if you pass something a provider cannot handle.
+
+Two new options help along the way. `.task` tells models such as EmbeddingGemma 2 whether your text is a `"query"` or a `"document"`. `.media_columns = TRUE` adds a `modality` and a `path` column to the result. `.dimensions` gives shorter vectors and now also works with `openai()` and `mistral()`.
+
+## Smaller changes
+
+`gemini()` and `send_gemini_batch()` now warn when you set `.temperature`, `.top_p` or `.top_k` on a Gemini model numbered 3.6 or later, because Google's newer models ignore these values. `claude()` now also refuses these arguments for Claude Haiku 5 models before sending the request, as it already does for Sonnet 5 and Opus 5.
+
+Tool results now reach the model the same way on every provider. A tool that returns a data frame now sends the printed table instead of JSON on `openai()`, `ollama()` and the chat-completions providers.
+
+`img()` now labels GIF and WebP files with their own file type instead of `application/octet-stream`.
+
 # tidyllm 0.7.1
 
 This release prepares `gemini()` for Google's coming change to how

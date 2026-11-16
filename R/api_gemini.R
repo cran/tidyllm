@@ -5,7 +5,75 @@
 #' At the moment this is just a stub but is needed for methods dispatch
 #'
 #' @noRd
-api_gemini <- new_class("Google Gemini", APIProvider)
+api_gemini <- new_class("Google Gemini", APIProvider, properties = list(
+  model = class_character,
+  resolution = class_character
+))
+
+#' Gemini decision request: System One body with `input`, key in a header
+#' @noRd
+method(decide_request, api_gemini) <- function(.api, .state, .questions, .dry_run = FALSE) {
+  httr2::request("https://generativelanguage.googleapis.com/v1beta/decisions") |>
+    httr2::req_headers("Content-Type" = "application/json") |>
+    httr2::req_headers_redacted("x-goog-api-key" = get_api_key(.api, .dry_run)) |>
+    httr2::req_body_json(
+      system_one_body(
+        gemini_decide_input(.state, if (length(.api@resolution) > 0) .api@resolution),
+        .questions, .api@model, .state_key = "input"
+      ),
+      auto_unbox = TRUE
+    )
+}
+
+#' Input tokens by modality as a named numeric vector
+#'
+#' The reply lists one `{modality, tokens}` entry per modality; a plain named
+#' object is read as is.
+#' @param .x The `input_tokens_by_modality` field of the reply.
+#' @return A named numeric vector, or NULL when the reply has none.
+#' @noRd
+gemini_modality_tokens <- function(.x) {
+  if (length(.x) == 0) return(NULL)
+  entries <- is.null(names(.x)) && all(vapply(.x, \(e) is.list(e) && !is.null(e$modality), logical(1)))
+  if (!entries) return(unlist(.x))
+  stats::setNames(vapply(.x, \(e) as.numeric(e$tokens), numeric(1)), vapply(.x, \(e) e$modality, character(1)))
+}
+
+#' Gemini decision reply: System One answers keyed by name, no model field
+#' @noRd
+method(parse_decide_response, api_gemini) <- function(.api, .body, .questions) {
+  modality_tokens <- gemini_modality_tokens(.body$usage$input_tokens_by_modality)
+  .body$usage <- list(
+    input_tokens = .body$usage$total_input_tokens,
+    output_tokens = .body$usage$total_output_tokens
+  )
+  parsed <- parse_system_one(.body, .questions)
+  parsed$usage$tokens_by_modality <- modality_tokens
+  parsed
+}
+
+#' Answer yes/no, choice and score questions with Gemini's decision model
+#'
+#' @param .model Decision model name; default `"gemini-decision-1"`.
+#' @param .resolution `NULL` (default, Gemini decides) or the image and video
+#'   resolution: `"low"`, `"medium"`, `"high"` or `"ultra_high"` (images only).
+#'   `"low"` costs about a quarter of the tokens.
+#' @inheritParams run_decide
+#' @noRd
+gemini_decide <- function(.state, .questions, .model = "gemini-decision-1", .resolution = NULL,
+                          .dry_run = FALSE, .timeout = 60, .max_tries = 3) {
+  c(".resolution must be NULL, \"low\", \"medium\", \"high\" or \"ultra_high\"" =
+      is.null(.resolution) || (length(.resolution) == 1 && .resolution %in% c("low", "medium", "high", "ultra_high"))) |>
+    validate_inputs()
+  api <- api_gemini(
+    short_name = "gemini",
+    long_name = "Google Gemini",
+    api_key_env_var = "GOOGLE_API_KEY",
+    model = .model,
+    resolution = .resolution %||% character(0)
+  )
+  run_decide(api, .state, .questions, .dry_run, .timeout, .max_tries)
+}
 
 #' Convert LLMMessage to Gemini API-Compatible Format
 #'
@@ -376,7 +444,39 @@ gemini_inject_files <- function(.gemini_contents,
 
 
 
-gemini_thinking_levels <- c("minimal", "low", "medium", "high")
+gemini_thinking_levels <- c("minimal", "low", "medium", "high", "xhigh")
+
+#' Whether a Gemini model ignores temperature, top_p and top_k
+#'
+#' Gemini 3.6 Flash and later models ignore these sampling values, including
+#' names such as `gemini-4-argon` that carry only a major version. Names without
+#' a version, such as `gemini-flash-latest`, return `FALSE`.
+#'
+#' @param .model A Gemini model name such as `"gemini-3.8-flash"`.
+#' @return A logical.
+#' @noRd
+gemini_ignores_sampling <- function(.model) {
+  version <- as.integer(stringr::str_match(.model, "^gemini-(\\d{1,2})(?!\\d)(?:\\.(\\d+))?")[1, 2:3])
+  !is.na(version[1]) && (version[1] > 3L || (version[1] == 3L && isTRUE(version[2] >= 6L)))
+}
+
+#' Warn when sampling arguments are passed to a Gemini model that ignores them
+#' @param .model A Gemini model name.
+#' @param .temperature,.top_p,.top_k The sampling arguments, `NULL` when unset.
+#' @return `NULL`, invisibly.
+#' @noRd
+warn_gemini_sampling <- function(.model, .temperature, .top_p, .top_k) {
+  set <- c(.temperature = !is.null(.temperature), .top_p = !is.null(.top_p), .top_k = !is.null(.top_k))
+  if (any(set) && gemini_ignores_sampling(.model)) {
+    ignored <- names(set)[set]
+    model <- .model
+    cli::cli_warn(
+      "{.val {model}} ignores {.arg {ignored}}. Gemini 3.6 Flash and later models do not use sampling values, and Google plans to reject them.",
+      class = "tidyllm_gemini_sampling_ignored"
+    )
+  }
+  invisible(NULL)
+}
 
 #' Send LLMMessage to Gemini API
 #'
@@ -404,8 +504,9 @@ gemini_thinking_levels <- c("minimal", "low", "medium", "high")
 #' @param .max_tool_rounds Integer specifying the maximum number of tool use iterations (default: 10).
 #'   Set to 1 for single-round tool use, or higher for multi-turn agentic loops.
 #' @param .thinking_level How much the model reasons before answering: `"minimal"`, `"low"`,
-#'   `"medium"` or `"high"` (default: NULL, the model's own default). Supported levels
-#'   vary by model; `gemini-3.8-flash` accepts `"low"`, `"medium"` and `"high"`.
+#'   `"medium"`, `"high"` or `"xhigh"` (default: NULL, the model's own default). Supported
+#'   levels vary by model; `gemini-3.8-flash` and the Gemini 4 models accept `"low"`,
+#'   `"medium"` and `"high"`, and `gemini-4-hydrogen` also `"xhigh"`.
 #' @param .thinking_budget Deprecated. Token budget for internal reasoning
 #'   (default: NULL). Use `.thinking_level` instead; Google plans to reject token budgets on
 #'   upcoming models. Cannot be combined with `.thinking_level`.
@@ -487,11 +588,13 @@ gemini_build_chat_request <- function(.llm,
     "Input .stream must be logical" = is.logical(.verbose),
     "Input .tools must be NULL, a TOOL object, or a list of TOOL objects" = is.null(.tools) || S7_inherits(.tools, TOOL) || (is.list(.tools) && all(purrr::map_lgl(.tools, ~ S7_inherits(.x, TOOL)))),
     ".max_tool_rounds must be a positive integer" = is_integer_valued(.max_tool_rounds) && .max_tool_rounds >= 1,
-    ".thinking_level must be NULL or one of \"minimal\", \"low\", \"medium\", \"high\"" = is.null(.thinking_level) || (is.character(.thinking_level) && length(.thinking_level) == 1 && .thinking_level %in% gemini_thinking_levels),
+    ".thinking_level must be NULL or one of \"minimal\", \"low\", \"medium\", \"high\", \"xhigh\"" = is.null(.thinking_level) || (is.character(.thinking_level) && length(.thinking_level) == 1 && .thinking_level %in% gemini_thinking_levels),
     ".thinking_budget must be NULL or a non-negative integer" = is.null(.thinking_budget) || (is_integer_valued(.thinking_budget) && .thinking_budget >= 0),
     "Set only one of .thinking_level and .thinking_budget" = is.null(.thinking_level) || is.null(.thinking_budget)
   ) |>
     validate_inputs()
+
+  warn_gemini_sampling(.model, .temperature, .top_p, .top_k)
 
   if (!is.null(.thinking_budget)) {
     lifecycle::deprecate_warn(
@@ -809,20 +912,34 @@ gemini_delete_file <- function(.file_name) {
 
 #' Generate Embeddings Using the Google Gemini API
 #'
-#' @param .input  A character vector of texts to embed or an `LLMMessage` object
+#' `gemini-embedding-2` embeds text, images (JPEG or PNG, at most 6 per item), audio
+#' (WAV or MP3, up to 180 seconds) and video (MP4, up to 120 seconds) into one space.
+#' Media files are sent inline and must not exceed 20 MB. The model reads task
+#' instructions from the text, so `.task` adds a text prefix and no `taskType` is sent.
+#'
+#' @param .input  A character vector of texts to embed, a list mixing texts with `img()`,
+#'   `audio_file()` and `video_file()` objects, or an `LLMMessage` object. Each list element
+#'   is one row; a nested list is one fused item with a single vector.
 #' @param .model The embedding model identifier (default: "gemini-embedding-2").
 #' @param .truncate Whether to truncate inputs to fit the model's context length (default: TRUE).
 #' @param .timeout Timeout for the API request in seconds (default: 120).
 #' @param .dry_run If TRUE, perform a dry run and return the request object.
 #' @param .max_tries Maximum retry attempts for requests (default: 3).
-#' @return A matrix where each column corresponds to the embedding of a message in the message history.
+#' @param .task `NULL` (default), `"query"` or `"document"`. Adds the task prefix to text;
+#'   media get none.
+#' @param .dimensions Number of dimensions to return (`gemini-embedding-2` accepts 128 to
+#'   3072 and renormalises the shortened vector). Default: the model's 3072.
+#' @return A tibble with columns `input` (text, or a label such as `[IMG] cat.jpg`) and
+#'   `embeddings` (list of numeric vectors).
 #' @export
 gemini_embedding <- function(.input,
                              .model = "gemini-embedding-2",
                              .truncate = TRUE,
                              .timeout = 120,
                              .dry_run = FALSE,
-                             .max_tries = 3) {
+                             .max_tries = 3,
+                             .task = NULL,
+                             .dimensions = NULL) {
 
   # Get the API key
   api_key <- Sys.getenv("GOOGLE_API_KEY")
@@ -832,27 +949,25 @@ gemini_embedding <- function(.input,
   
   # Validate inputs
   c(
-    "Input .input must be a character vector or an LLMMessage object" = S7_inherits(.input, LLMMessage) | is.character(.input),
     "Input .model must be a string" = is.character(.model),
     "Input .truncate must be logical" = is.logical(.truncate),
     "Input .timeout must be a positive numeric value" = is.numeric(.timeout) && .timeout > 0,
     ".dry_run must be logical" = is.logical(.dry_run)
   ) |> validate_inputs()
+  validate_embed_options(.task, .dimensions)
   
-  # Prepare message texts
-  input_texts <- parse_embedding_input(.input)
+  items <- embed_items(.input)
+  input_labels <- embed_labels(items)
+  check_embed_media_size(items, 20, "gemini")
+  prefix <- embed_task_prefix(.task)
   
-  # Prepare batch request
   request_body <- list(
-    requests = lapply(input_texts, function(text) {
-      list(
-        model = paste0("models/",.model),
-        content = list(
-          parts = list(
-            list(text = text)
-          )
-        )
-      )
+    requests = purrr::map(items, \(item) {
+      purrr::compact(list(
+        model = paste0("models/", .model),
+        content = list(parts = purrr::map(embed_apply_prefix(item, prefix)$parts, gemini_embed_part)),
+        outputDimensionality = .dimensions
+      ))
     })
   )
   
@@ -881,8 +996,17 @@ gemini_embedding <- function(.input,
   perform_embedding_request(.request = request,
                             .timeout = .timeout,
                             .max_tries = 3,
-                            .input_texts = input_texts, 
+                            .input_texts = input_labels, 
                             .fn_extract_embeddings = extract_embeddings_fn)
+}
+
+#' One embed part as a Gemini content part
+#' @param .part A string or a tidyllm image, audio or video object.
+#' @return A named list for the `parts` array.
+#' @noRd
+gemini_embed_part <- function(.part) {
+  if (is.character(.part)) return(list(text = .part))
+  list(inlineData = list(mimeType = embed_part_mime(.part), data = embed_part_base64(.part)))
 }
 
 #' Submit a list of LLMMessage objects to Gemini's batch API
@@ -901,7 +1025,7 @@ gemini_embedding <- function(.input,
 #' @param .json_schema Optional schema to enforce output structure.
 #' @param .grounding_threshold Optional grounding threshold (0-1) to enable Google Search.
 #' @param .thinking_level How much the model reasons before answering: `"minimal"`, `"low"`,
-#'   `"medium"` or `"high"` (default: NULL, the model's own default). Supported levels vary by model.
+#'   `"medium"`, `"high"` or `"xhigh"` (default: NULL, the model's own default). Supported levels vary by model.
 #' @param .timeout Timeout in seconds (default: 120).
 #' @param .dry_run If TRUE, returns the constructed request (default: FALSE).
 #' @param .max_tries Maximum retry attempts (default: 3).
@@ -953,7 +1077,7 @@ send_gemini_batch <- function(.llms,
       is.null(.json_schema) || is.list(.json_schema) || is_ellmer_type(.json_schema),
     "Input .grounding_threshold must be NULL or in [0.0, 1.0]" =
       is.null(.grounding_threshold) || (.grounding_threshold >= 0.0 && .grounding_threshold <= 1.0),
-    ".thinking_level must be NULL or one of \"minimal\", \"low\", \"medium\", \"high\"" =
+    ".thinking_level must be NULL or one of \"minimal\", \"low\", \"medium\", \"high\", \"xhigh\"" =
       is.null(.thinking_level) || (is.character(.thinking_level) && length(.thinking_level) == 1 && .thinking_level %in% gemini_thinking_levels),
     "Input .timeout must be a positive integer" =
       is_integer_valued(.timeout) && .timeout > 0,
@@ -961,6 +1085,7 @@ send_gemini_batch <- function(.llms,
       is_integer_valued(.max_tries) && .max_tries > 0,
     "Input .dry_run must be logical" = is.logical(.dry_run)
   ) |> validate_inputs()
+  warn_gemini_sampling(.model, .temperature, .top_p, .top_k)
   
   # --- Auto-name messages if needed ---
   if (is.null(names(.llms)) || anyNA(names(.llms)) || any(names(.llms) == "")) {
@@ -1470,6 +1595,7 @@ gemini <- create_provider_function(
   chat = gemini_chat,
   build = gemini_build_chat_request,
   embed = gemini_embedding,
+  decide = gemini_decide,
   send_batch = send_gemini_batch,
   check_batch = check_gemini_batch,
   list_batches = list_gemini_batches,
@@ -1479,5 +1605,7 @@ gemini <- create_provider_function(
   list_files  = gemini_list_files_verb,
   file_info   = gemini_file_info_verb,
   delete_file = gemini_delete_file_verb,
-  .media = c("image", "pdf", "audio", "video", "files")
+  .media = c("image", "pdf", "audio", "video", "files"),
+  .embed_media = c("image", "audio", "video"),
+  .decide_media = c("image", "audio", "video", "pdf")
 )
